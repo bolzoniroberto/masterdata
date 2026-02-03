@@ -14,6 +14,7 @@ import config
 from services.excel_handler import ExcelHandler
 from services.validator import DataValidator
 from services.merger import DBTNSMerger
+from services.database import DatabaseHandler
 
 # Configurazione pagina
 st.set_page_config(
@@ -34,37 +35,90 @@ if 'db_tns_df' not in st.session_state:
     st.session_state.db_tns_df = None
 if 'excel_handler' not in st.session_state:
     st.session_state.excel_handler = None
+if 'database_handler' not in st.session_state:
+    st.session_state.database_handler = DatabaseHandler()
+
+# Inizializza database se non esiste
+if st.session_state.database_handler:
+    st.session_state.database_handler.init_db()
 
 
 def load_data_from_upload(uploaded_file):
-    """Carica dati da file uploadato"""
+    """
+    Carica dati da file uploadato e persisti nel database.
+
+    Flow:
+    1. Load Excel file
+    2. Validate data
+    3. Import into SQLite database
+    4. Load from database to session state
+    """
     try:
         # Salva file temporaneo
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xls') as tmp:
             tmp.write(uploaded_file.getvalue())
             tmp_path = Path(tmp.name)
-        
-        # Carica dati
+
+        # Carica dati da Excel
         handler = ExcelHandler(tmp_path)
         personale, strutture, db_tns = handler.load_data()
-        
-        # Salva in session state
-        st.session_state.personale_df = personale
-        st.session_state.strutture_df = strutture
-        st.session_state.db_tns_df = db_tns
-        st.session_state.excel_handler = handler
-        st.session_state.data_loaded = True
-        
-        return True, "Dati caricati con successo!"
-    
+
+        # Valida dati
+        validator = DataValidator()
+        errors = validator.validate_all(personale, strutture)
+        if errors:
+            error_list = "\n".join(errors[:5])  # Primi 5 errori
+            return False, f"Errori validazione dati:\n{error_list}"
+
+        # Importa nel database
+        db_handler = st.session_state.database_handler
+        p_count, s_count = db_handler.import_from_dataframe(personale, strutture)
+
+        # Ricarica da database a session state
+        return load_data_from_db()
+
     except Exception as e:
         return False, f"Errore caricamento: {str(e)}"
 
 
+def load_data_from_db():
+    """
+    Carica dati dal database SQLite in session state.
+
+    Viene usato:
+    - Dopo upload Excel (che importa nel DB)
+    - Quando app si riavvia (carica da DB persistente)
+    """
+    try:
+        db_handler = st.session_state.database_handler
+        personale, strutture = db_handler.export_to_dataframe()
+
+        # Salva in session state (cache per UI performance)
+        st.session_state.personale_df = personale
+        st.session_state.strutture_df = strutture
+        st.session_state.db_tns_df = None  # Rigenerato al bisogno da merger_view
+        st.session_state.data_loaded = True
+
+        return True, f"Dati caricati da database: {len(personale)} personale, {len(strutture)} strutture"
+
+    except Exception as e:
+        return False, f"Errore caricamento database: {str(e)}"
+
+
 def main():
     """Funzione principale applicazione"""
-    
+
+    # === AUTO-LOAD DA DATABASE ===
+    # Se database ha dati e session state è vuoto, carica automaticamente
+    if not st.session_state.data_loaded and config.DB_PATH.exists():
+        try:
+            success, msg = load_data_from_db()
+            if success:
+                st.session_state.data_loaded = True
+        except:
+            pass  # Database vuoto, continua a chiedere upload
+
     # Header
     st.title("✈️ Travel & Expense Approval Management")
     st.subheader("Gruppo Il Sole 24 ORE - Gestione Ruoli Approvazione")
@@ -86,10 +140,37 @@ def main():
                 success, message = load_data_from_upload(uploaded_file)
                 if success:
                     st.success(message)
+                    st.rerun()
                 else:
                     st.error(message)
-        
+
         st.markdown("---")
+
+        # === PULSANTE RESET DATABASE ===
+        if st.session_state.data_loaded:
+            st.markdown("### 🔄 Database Manager")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📤 Re-import Excel", use_container_width=True):
+                    st.session_state.data_loaded = False
+                    st.info("Carica di nuovo il file Excel per reimportare i dati nel database")
+                    st.rerun()
+
+            with col2:
+                if st.button("🗑️ Clear Database", use_container_width=True):
+                    try:
+                        cursor = st.session_state.database_handler.conn.cursor()
+                        cursor.execute("DELETE FROM personale")
+                        cursor.execute("DELETE FROM strutture")
+                        cursor.execute("DELETE FROM db_tns")
+                        st.session_state.database_handler.conn.commit()
+                        st.session_state.data_loaded = False
+                        st.success("Database azzerato")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore: {str(e)}")
+
+            st.markdown("---")
         
         # Navigazione
         if st.session_state.data_loaded:

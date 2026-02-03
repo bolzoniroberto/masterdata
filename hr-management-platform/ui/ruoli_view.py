@@ -218,10 +218,18 @@ def show_role_detail_panel(personale_df: pd.DataFrame, filtered_df: pd.DataFrame
                         help=f"Inserisci i dati per il ruolo {role_col}"
                     )
 
-                    # Salva in tempo reale
+                    # Salva in tempo reale (session state + database)
                     if new_value != current_value:
                         personale_df.at[idx, role_col] = new_value if new_value else None
                         st.session_state.personale_df = personale_df
+
+                        # === PERSISTI NEL DATABASE ===
+                        try:
+                            db_handler = st.session_state.database_handler
+                            updates = {role_col: new_value if new_value else None}
+                            db_handler.update_personale(record['TxCodFiscale'], updates)
+                        except Exception as e:
+                            st.warning(f"⚠️ Errore persistenza database: {str(e)}")
 
     st.markdown("---")
 
