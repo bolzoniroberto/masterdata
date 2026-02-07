@@ -51,16 +51,65 @@ if st.session_state.database_handler:
         print(f"⚠️ Warning: Migration failed: {str(e)}")
 
 
-def preview_import_from_upload(uploaded_file, show_preview: bool = True):
+def load_excel_to_staging(uploaded_file):
     """
-    Step 1: Carica file e opzionalmente genera preview modifiche.
+    Step 1: Carica file Excel in staging area (NON ancora nel database).
+    L'utente potrà esplorare tutti i dati prima di decidere se importarli.
 
     Args:
         uploaded_file: File Excel uploadato
-        show_preview: Se True, genera preview e attende conferma utente
 
     Returns:
-        Tuple (success, message, preview_data or None)
+        Tuple (success, message)
+    """
+    try:
+        import tempfile
+        import pandas as pd
+
+        # Salva file temporaneo
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xls') as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = Path(tmp.name)
+
+        # Carica dati da Excel
+        handler = ExcelHandler(tmp_path)
+        personale, strutture, db_tns = handler.load_data()
+
+        # Valida dati
+        validator = DataValidator()
+        errors = validator.validate_all(personale, strutture)
+        if errors:
+            error_list = "\n".join(errors[:5])
+            return False, f"❌ Errori validazione dati:\n{error_list}"
+
+        # Salva in STAGING (non ancora nel database!)
+        st.session_state.excel_staging = {
+            'personale_df': personale,
+            'strutture_df': strutture,
+            'filename': uploaded_file.name,
+            'file_size_mb': len(uploaded_file.getvalue()) / (1024 * 1024),
+        }
+
+        return True, f"""✅ **File caricato con successo in memoria!**
+
+📊 Contenuto:
+- {len(personale)} dipendenti (Personale)
+- {len(strutture)} strutture organizzative
+
+🔍 **Prossimi passi:**
+1. Esplora i dati usando le tab qui sotto
+2. Verifica che tutto sia corretto
+3. Clicca "Importa nel Database" quando sei pronto
+"""
+
+    except Exception as e:
+        return False, f"❌ Errore caricamento: {str(e)}"
+
+
+def preview_import_from_upload(uploaded_file, show_preview: bool = True):
+    """
+    DEPRECATO: Mantenuto per compatibilità.
+    Ora usiamo load_excel_to_staging() + confirm_import_from_staging()
     """
     try:
         import tempfile
@@ -143,6 +192,81 @@ def preview_import_from_upload(uploaded_file, show_preview: bool = True):
 
     except Exception as e:
         return False, f"Errore caricamento: {str(e)}", None
+
+
+def confirm_import_from_staging(user_note: str = ""):
+    """
+    Step 2: Importa dati da staging area nel database.
+    Chiamato dopo che l'utente ha esplorato e verificato i dati.
+
+    Args:
+        user_note: Nota opzionale utente
+
+    Returns:
+        Tuple (success, message)
+    """
+    try:
+        import json
+        from services.version_manager import VersionManager
+
+        if 'excel_staging' not in st.session_state:
+            return False, "❌ Nessun dato in staging. Carica prima un file Excel."
+
+        staging = st.session_state.excel_staging
+        db_handler = st.session_state.database_handler
+
+        # Begin import version
+        version_id = db_handler.begin_import_version(
+            source_filename=staging['filename'],
+            user_note=user_note or None
+        )
+
+        # Import data
+        personale = staging['personale_df']
+        strutture = staging['strutture_df']
+        p_count, s_count = db_handler.import_from_dataframe(personale, strutture)
+
+        # Complete import version
+        changes_summary = json.dumps({
+            'type': 'upload_import',
+            'personale_imported': p_count,
+            'strutture_imported': s_count
+        })
+        db_handler.complete_import_version(version_id, p_count, s_count, changes_summary)
+
+        # Create snapshot
+        try:
+            vm = VersionManager(db_handler, config.SNAPSHOTS_DIR)
+            snapshot_path = vm.create_snapshot(
+                import_version_id=version_id,
+                source_filename=staging['filename'],
+                user_note=user_note
+            )
+            snapshot_msg = f"📦 Snapshot #{version_id}: {Path(snapshot_path).name}"
+        except Exception as e:
+            print(f"⚠️ Errore creazione snapshot: {str(e)}")
+            snapshot_msg = f"⚠️ Snapshot non creato: {str(e)}"
+
+        # Reload to session state
+        success, msg = load_data_from_db()
+
+        # Cleanup staging
+        del st.session_state.excel_staging
+
+        return success, f"""✅ **Dati importati nel database con successo!**
+
+📊 Importati:
+- {p_count} dipendenti (Personale)
+- {s_count} strutture organizzative
+
+📦 Snapshot creato automaticamente
+{snapshot_msg}
+
+🎉 Database pronto! Usa "📸 Crea Snapshot" per salvare modifiche importanti.
+"""
+
+    except Exception as e:
+        return False, f"❌ Errore import: {str(e)}"
 
 
 def confirm_import_with_version(preview_data: dict, user_note: str = ""):
@@ -300,27 +424,17 @@ def main():
             st.caption(f"💾 Dimensione: {file_size_mb:.2f} MB")
 
         if uploaded_file is not None and not st.session_state.data_loaded:
-            # Check if preview already generated (waiting for confirmation)
-            if st.session_state.get('import_preview'):
-                # Show preview modal (handled below in main area)
-                pass
-            else:
-                # Generate preview or direct import
-                with st.spinner("Caricamento dati..."):
-                    success, message, preview_data = preview_import_from_upload(
-                        uploaded_file, show_preview
-                    )
+            # Check if already in staging mode
+            if not st.session_state.get('excel_staging'):
+                # Load Excel to staging area (NOT yet in database)
+                with st.spinner("Caricamento file Excel in memoria..."):
+                    success, message = load_excel_to_staging(uploaded_file)
 
-                    if not success:
-                        st.error(message)
-                    elif preview_data:
-                        # Save preview and show modal
-                        st.session_state.import_preview = preview_data
-                        st.rerun()
-                    else:
-                        # Direct import completed
+                    if success:
                         st.success(message)
                         st.rerun()
+                    else:
+                        st.error(message)
 
         st.markdown("---")
 
@@ -457,6 +571,103 @@ def main():
                 st.rerun()
 
         st.stop()
+
+    # === STAGING EXPLORER (dati Excel caricati ma non ancora nel DB) ===
+    if st.session_state.get('excel_staging'):
+        staging = st.session_state.excel_staging
+        personale_df = staging['personale_df']
+        strutture_df = staging['strutture_df']
+
+        st.markdown("---")
+        st.title("🔍 Esplora Dati Excel")
+        st.caption(f"**File:** {staging['filename']} ({staging['file_size_mb']:.2f} MB)")
+        st.info("📋 **I dati sono caricati in memoria (NON ancora nel database)**. Esplora e verifica tutto prima di importare.")
+
+        # === CONTEGGI ===
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("👥 Dipendenti", len(personale_df))
+        with col2:
+            st.metric("🏗️ Strutture", len(strutture_df))
+        with col3:
+            st.metric("📊 Totale Record", len(personale_df) + len(strutture_df))
+
+        st.markdown("---")
+
+        # === TAB CON TABELLE COMPLETE ===
+        tab1, tab2 = st.tabs(["👥 Personale (Dipendenti)", "🏗️ Strutture Organizzative"])
+
+        with tab1:
+            st.markdown(f"### 👥 Personale - Tutti i {len(personale_df)} dipendenti")
+            st.caption("Tabella completa - Scorri per vedere tutti i record")
+
+            # Mostra TUTTA la tabella
+            st.dataframe(
+                personale_df,
+                use_container_width=True,
+                height=500,  # Altezza fissa, scrollabile
+                hide_index=True
+            )
+
+            # Stats aggiuntive
+            with st.expander("📊 Statistiche Personale"):
+                st.write(f"- **Totale dipendenti:** {len(personale_df)}")
+                st.write(f"- **Codici Fiscali univoci:** {personale_df['TxCodFiscale'].nunique()}")
+                st.write(f"- **Unità Organizzative:** {personale_df['Unità Organizzativa'].nunique()}")
+                st.write(f"- **Approvatori (SÌ):** {len(personale_df[personale_df['Approvatore'] == 'SÌ'])}")
+
+        with tab2:
+            st.markdown(f"### 🏗️ Strutture - Tutte le {len(strutture_df)} strutture")
+            st.caption("Tabella completa - Scorri per vedere tutte le strutture")
+
+            # Mostra TUTTA la tabella
+            st.dataframe(
+                strutture_df,
+                use_container_width=True,
+                height=500,  # Altezza fissa, scrollabile
+                hide_index=True
+            )
+
+            # Stats aggiuntive
+            with st.expander("📊 Statistiche Strutture"):
+                col_padre = "UNITA' OPERATIVA PADRE "
+                st.write(f"- **Totale strutture:** {len(strutture_df)}")
+                st.write(f"- **Codici univoci:** {strutture_df['Codice'].nunique()}")
+                st.write(f"- **Con padre organizzativo:** {strutture_df[col_padre].notna().sum()}")
+
+        st.markdown("---")
+
+        # === CONFERMA IMPORT ===
+        st.markdown("### ✅ Conferma Import nel Database")
+        st.warning("⚠️ **Attenzione:** L'import nel database sovrascriverà i dati esistenti (se presenti).")
+
+        user_note = st.text_input(
+            "💬 Nota descrittiva (opzionale)",
+            placeholder="es. Primo import database - dati gennaio 2026",
+            help="Aggiungi una nota per identificare questo import negli snapshot"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Importa nel Database", type="primary", use_container_width=True):
+                with st.spinner("Importazione in corso nel database..."):
+                    success, msg = confirm_import_from_staging(user_note)
+
+                    if success:
+                        st.success(msg)
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+        with col2:
+            if st.button("❌ Annulla e Ricarica", use_container_width=True):
+                del st.session_state.excel_staging
+                st.info("🗑️ Dati rimossi da memoria. Carica un nuovo file.")
+                st.rerun()
+
+        st.stop()  # Blocca rendering resto pagina mentre in staging mode
 
     # === PREVIEW MODAL (se in attesa di conferma) ===
     if st.session_state.get('import_preview'):
