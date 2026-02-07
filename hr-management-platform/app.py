@@ -444,8 +444,17 @@ def main():
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("📤 Re-import Excel", use_container_width=True):
+                    # Pulisci tutti gli stati
                     st.session_state.data_loaded = False
-                    st.info("Carica di nuovo il file Excel per reimportare i dati nel database")
+                    if 'excel_staging' in st.session_state:
+                        del st.session_state.excel_staging
+                    if 'import_preview' in st.session_state:
+                        del st.session_state.import_preview
+                    if 'personale_df' in st.session_state:
+                        del st.session_state.personale_df
+                    if 'strutture_df' in st.session_state:
+                        del st.session_state.strutture_df
+                    st.info("✅ Database resettato. Carica un nuovo file Excel dalla sidebar.")
                     st.rerun()
 
             with col2:
