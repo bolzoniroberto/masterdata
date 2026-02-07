@@ -265,9 +265,13 @@ def main():
     # Sidebar per navigazione
     with st.sidebar:
         st.header("📋 Menu")
-        
+
         # Upload file
-        st.markdown("### 📁 Carica File Excel")
+        if not st.session_state.data_loaded:
+            st.markdown("### 📁 Primo Import")
+            st.info("👋 **Database vuoto**\n\nCarica un file Excel per iniziare")
+        else:
+            st.markdown("### 📁 Carica File Excel")
 
         # Toggle preview
         show_preview = st.checkbox(
@@ -281,6 +285,13 @@ def main():
             type=['xls', 'xlsx'],
             help="File Excel con fogli 'TNS Personale' e 'TNS Strutture'"
         )
+
+        # Helper per primo import
+        if not st.session_state.data_loaded and uploaded_file is None:
+            with st.expander("💡 File di esempio", expanded=False):
+                st.caption("Puoi usare il file di test:")
+                st.code("data/input/TNS_HR_Data.xls", language=None)
+                st.caption("Trascinalo nel box sopra ⬆️")
 
         if uploaded_file is not None:
             # Mostra info file immediatamente
@@ -562,13 +573,26 @@ def main():
         - 🔄 **Generare** il foglio DB_TNS per export al sistema trasferte
         - 💾 **Salvare** ed esportare i dati aggiornati con backup automatico
 
-        ### 🚀 Per iniziare:
+        ### 🚀 Primo Import - Come iniziare:
 
-        1. Carica il file Excel TNS dalla sidebar
-        2. Naviga tra le sezioni usando il menu
-        3. Modifica ruoli e strutture direttamente nelle tabelle
-        4. Genera il DB_TNS aggiornato
-        5. Salva o esporta il risultato per l'import
+        1. **📁 Carica file Excel** dalla sidebar (in alto a sinistra)
+           - File di esempio disponibile: `data/input/TNS_HR_Data.xls`
+           - Oppure usa il tuo file Excel con fogli "TNS Personale" e "TNS Strutture"
+
+        2. **🔍 Anteprima file** (se attivata):
+           - Vedi conteggi: dipendenti, strutture, totale
+           - Verifica prime 5 righe di ogni tipo
+           - Aggiungi nota descrittiva (opzionale): es. "Primo import database"
+
+        3. **✅ Conferma caricamento**:
+           - Clicca "Carica nel Database"
+           - Attendi il messaggio di successo
+           - Uno snapshot viene creato automaticamente per recovery
+
+        4. **🎉 Database pronto!**:
+           - Naviga tra le sezioni usando il menu
+           - Modifica ruoli e strutture
+           - Usa "📸 Crea Snapshot Manuale" prima di modifiche importanti
 
         ### 📋 Struttura file Excel:
 
