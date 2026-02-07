@@ -77,10 +77,18 @@ def load_excel_to_staging(uploaded_file):
 
         # Valida dati
         validator = DataValidator()
-        errors = validator.validate_all(personale, strutture)
-        if errors:
-            error_list = "\n".join(errors[:5])
-            return False, f"❌ Errori validazione dati:\n{error_list}"
+
+        # Valida personale
+        personale_result = validator.validate_personale(personale)
+        if not personale_result.is_valid():
+            error_summary = personale_result.get_summary()
+            return False, f"❌ Errori validazione Personale:\n{error_summary}"
+
+        # Valida strutture
+        strutture_result = validator.validate_strutture(strutture)
+        if not strutture_result.is_valid():
+            error_summary = strutture_result.get_summary()
+            return False, f"❌ Errori validazione Strutture:\n{error_summary}"
 
         # Salva in STAGING (non ancora nel database!)
         st.session_state.excel_staging = {
