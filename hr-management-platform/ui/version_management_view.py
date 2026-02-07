@@ -111,10 +111,10 @@ def show_version_management_view():
     with col1:
         st.markdown("#### 🔄 Ripristina Versione")
 
-        # Selettore versione
+        # Selettore versione - usa DataFrame che ha timestamp_display
         snapshot_options = [
-            f"#{s['import_version_id']}: {s['timestamp_display']} - {s['source_filename']}"
-            for s in snapshots
+            f"#{row['import_version_id']}: {row['timestamp_display']} - {row['source_filename']}"
+            for _, row in snapshots_df.iterrows()
         ]
 
         if snapshot_options:
@@ -125,17 +125,19 @@ def show_version_management_view():
             )
 
             selected_idx = snapshot_options.index(selected_snapshot_str)
-            selected_snapshot = snapshots[selected_idx]
+            selected_snapshot_row = snapshots_df.iloc[selected_idx]
+            selected_snapshot = snapshots[selected_idx]  # Per file_path nel restore
 
             # Info snapshot selezionato
             with st.expander("ℹ️ Dettagli Snapshot", expanded=True):
                 st.markdown(f"""
-                **ID Versione:** #{selected_snapshot['import_version_id']}
-                **Data/Ora:** {selected_snapshot['timestamp_display']}
-                **File Origine:** `{selected_snapshot['source_filename']}`
-                **Nota:** {selected_snapshot['user_note'] or '(nessuna)'}
-                **Record:** {selected_snapshot['personale_count']} personale, {selected_snapshot['strutture_count']} strutture
-                **Dimensione:** {vm.get_snapshot_size_mb(selected_snapshot['file_path']):.2f} MB
+                **ID Versione:** #{selected_snapshot_row['import_version_id']}
+                **Data/Ora:** {selected_snapshot_row['timestamp_display']}
+                **Tipo:** {selected_snapshot_row['tipo']}
+                **File Origine:** `{selected_snapshot_row['source_filename']}`
+                **Nota:** {selected_snapshot_row['user_note'] or '(nessuna)'}
+                **Record:** {selected_snapshot_row['personale_count']} personale, {selected_snapshot_row['strutture_count']} strutture
+                **Dimensione:** {selected_snapshot_row['size_mb']:.2f} MB
                 """)
 
             # Checkbox conferma
