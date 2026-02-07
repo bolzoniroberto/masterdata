@@ -357,6 +357,10 @@ def load_data_from_db():
         db_handler = st.session_state.database_handler
         personale, strutture = db_handler.export_to_dataframe()
 
+        # Verifica che ci siano effettivamente dati
+        if len(personale) == 0 and len(strutture) == 0:
+            return False, "Database vuoto - nessun dato da caricare"
+
         # Salva in session state (cache per UI performance)
         st.session_state.personale_df = personale
         st.session_state.strutture_df = strutture
@@ -379,8 +383,12 @@ def main():
             success, msg = load_data_from_db()
             if success:
                 st.session_state.data_loaded = True
-        except:
-            pass  # Database vuoto, continua a chiedere upload
+                print(f"✅ Auto-load from DB: {msg}")
+            else:
+                print(f"ℹ️ Auto-load skipped: {msg}")
+        except Exception as e:
+            print(f"⚠️ Auto-load error: {str(e)}")
+            pass  # Database vuoto o errore, continua a chiedere upload
 
     # Header
     st.title("✈️ Travel & Expense Approval Management")
