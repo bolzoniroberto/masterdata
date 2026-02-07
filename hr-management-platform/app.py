@@ -5,6 +5,7 @@ Gruppo Il Sole 24 ORE
 import streamlit as st
 from pathlib import Path
 import sys
+import pandas as pd
 
 # Setup path per import moduli
 BASE_DIR = Path(__file__).parent
@@ -42,20 +43,30 @@ if 'database_handler' not in st.session_state:
 if st.session_state.database_handler:
     st.session_state.database_handler.init_db()
 
+    # Esegui migrations se necessario
+    try:
+        from migrations.migration_001_add_import_versioning import migrate
+        migrate(config.DB_PATH)
+    except Exception as e:
+        print(f"⚠️ Warning: Migration failed: {str(e)}")
 
-def load_data_from_upload(uploaded_file):
+
+def preview_import_from_upload(uploaded_file, show_preview: bool = True):
     """
-    Carica dati da file uploadato e persisti nel database.
+    Step 1: Carica file e opzionalmente genera preview modifiche.
 
-    Flow:
-    1. Load Excel file
-    2. Validate data
-    3. Import into SQLite database
-    4. Load from database to session state
+    Args:
+        uploaded_file: File Excel uploadato
+        show_preview: Se True, genera preview e attende conferma utente
+
+    Returns:
+        Tuple (success, message, preview_data or None)
     """
     try:
-        # Salva file temporaneo
         import tempfile
+        import pandas as pd
+
+        # Salva file temporaneo
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xls') as tmp:
             tmp.write(uploaded_file.getvalue())
             tmp_path = Path(tmp.name)
@@ -68,18 +79,146 @@ def load_data_from_upload(uploaded_file):
         validator = DataValidator()
         errors = validator.validate_all(personale, strutture)
         if errors:
-            error_list = "\n".join(errors[:5])  # Primi 5 errori
-            return False, f"Errori validazione dati:\n{error_list}"
+            error_list = "\n".join(errors[:5])
+            return False, f"Errori validazione dati:\n{error_list}", None
 
-        # Importa nel database
-        db_handler = st.session_state.database_handler
-        p_count, s_count = db_handler.import_from_dataframe(personale, strutture)
+        # SE preview disabilitata: import diretto
+        if not show_preview:
+            import json
+            from services.version_manager import VersionManager
 
-        # Ricarica da database a session state
-        return load_data_from_db()
+            db_handler = st.session_state.database_handler
+
+            # Begin import version
+            version_id = db_handler.begin_import_version(
+                source_filename=uploaded_file.name,
+                user_note="Import diretto (senza preview)"
+            )
+
+            # Import data
+            p_count, s_count = db_handler.import_from_dataframe(personale, strutture)
+
+            # Complete version
+            db_handler.complete_import_version(
+                version_id, p_count, s_count,
+                json.dumps({'note': 'Import diretto senza preview'})
+            )
+
+            # Create snapshot
+            try:
+                vm = VersionManager(db_handler, config.SNAPSHOTS_DIR)
+                snapshot_path = vm.create_snapshot(
+                    import_version_id=version_id,
+                    source_filename=uploaded_file.name,
+                    user_note="Import diretto (senza preview)"
+                )
+                snapshot_msg = f"\n📦 Snapshot creato per recovery: {Path(snapshot_path).name}"
+            except Exception as e:
+                print(f"⚠️ Errore creazione snapshot: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                snapshot_msg = f"\n⚠️ Warning: Snapshot non creato - {str(e)}"
+
+            # Reload to session state
+            success, msg = load_data_from_db()
+            return success, f"✅ {msg}{snapshot_msg}", None
+
+        # SE preview abilitata: genera preview semplice con stats file
+        else:
+            # Genera preview semplice con stats file
+            preview_data = {
+                'personale_df': personale,
+                'strutture_df': strutture,
+                'filename': uploaded_file.name,
+                'file_size_mb': len(uploaded_file.getvalue()) / (1024 * 1024),
+                'stats': {
+                    'personale_count': len(personale),
+                    'strutture_count': len(strutture),
+                    'personale_sample': personale.head(5).to_dict('records'),
+                    'strutture_sample': strutture.head(5).to_dict('records')
+                }
+            }
+
+            return True, "Preview generata", preview_data
 
     except Exception as e:
-        return False, f"Errore caricamento: {str(e)}"
+        return False, f"Errore caricamento: {str(e)}", None
+
+
+def confirm_import_with_version(preview_data: dict, user_note: str = ""):
+    """
+    Step 2: Conferma import dopo preview utente.
+
+    Args:
+        preview_data: Dati preview salvati in session state
+        user_note: Nota opzionale utente
+    """
+    try:
+        import json
+        from services.version_manager import VersionManager
+
+        db_handler = st.session_state.database_handler
+
+        # Begin import version
+        version_id = db_handler.begin_import_version(
+            source_filename=preview_data['filename'],
+            user_note=user_note or None
+        )
+
+        # Import data with version tracking
+        # Nota: import_version_id viene gestito internamente da _log_audit
+        personale = preview_data['personale_df']
+        strutture = preview_data['strutture_df']
+
+        p_count, s_count = db_handler.import_from_dataframe(personale, strutture)
+
+        # Generate summary for version completion
+        changes_summary = json.dumps({
+            'type': 'upload_import',
+            'personale_imported': p_count,
+            'strutture_imported': s_count
+        })
+
+        # Complete import version
+        db_handler.complete_import_version(version_id, p_count, s_count, changes_summary)
+
+        # **NEW: Create snapshot for version recovery**
+        try:
+            vm = VersionManager(db_handler, config.SNAPSHOTS_DIR)
+            snapshot_path = vm.create_snapshot(
+                import_version_id=version_id,
+                source_filename=preview_data['filename'],
+                user_note=user_note
+            )
+            snapshot_msg = f"\n📦 Snapshot creato per recovery: {Path(snapshot_path).name}"
+            print(f"✅ Snapshot creato: {snapshot_path}")
+        except Exception as e:
+            print(f"⚠️ Errore creazione snapshot: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            snapshot_msg = f"\n⚠️ Warning: Snapshot non creato - {str(e)}"
+
+        # Reload to session state
+        success, msg = load_data_from_db()
+
+        # Cleanup preview data
+        if 'import_preview' in st.session_state:
+            del st.session_state.import_preview
+
+        return success, f"""✅ **Dati caricati con successo nel database!**
+
+📊 Importati:
+- {p_count} dipendenti (Personale)
+- {s_count} strutture organizzative
+
+📦 Snapshot creato automaticamente per recovery
+{snapshot_msg}
+
+🎉 Puoi ora lavorare con i dati. Usa "📸 Crea Snapshot" per salvare modifiche importanti.
+"""
+
+    except Exception as e:
+        return False, f"Errore conferma import: {str(e)}"
 
 
 def load_data_from_db():
@@ -129,20 +268,48 @@ def main():
         
         # Upload file
         st.markdown("### 📁 Carica File Excel")
+
+        # Toggle preview
+        show_preview = st.checkbox(
+            "🔍 Mostra anteprima file",
+            value=True,
+            help="Visualizza contenuto file prima di caricare nel database"
+        )
+
         uploaded_file = st.file_uploader(
             "Carica file TNS (.xls/.xlsx)",
             type=['xls', 'xlsx'],
             help="File Excel con fogli 'TNS Personale' e 'TNS Strutture'"
         )
-        
+
+        if uploaded_file is not None:
+            # Mostra info file immediatamente
+            st.caption(f"📄 **{uploaded_file.name}**")
+            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+            st.caption(f"💾 Dimensione: {file_size_mb:.2f} MB")
+
         if uploaded_file is not None and not st.session_state.data_loaded:
-            with st.spinner("Caricamento dati..."):
-                success, message = load_data_from_upload(uploaded_file)
-                if success:
-                    st.success(message)
-                    st.rerun()
-                else:
-                    st.error(message)
+            # Check if preview already generated (waiting for confirmation)
+            if st.session_state.get('import_preview'):
+                # Show preview modal (handled below in main area)
+                pass
+            else:
+                # Generate preview or direct import
+                with st.spinner("Caricamento dati..."):
+                    success, message, preview_data = preview_import_from_upload(
+                        uploaded_file, show_preview
+                    )
+
+                    if not success:
+                        st.error(message)
+                    elif preview_data:
+                        # Save preview and show modal
+                        st.session_state.import_preview = preview_data
+                        st.rerun()
+                    else:
+                        # Direct import completed
+                        st.success(message)
+                        st.rerun()
 
         st.markdown("---")
 
@@ -171,7 +338,16 @@ def main():
                         st.error(f"Errore: {str(e)}")
 
             st.markdown("---")
-        
+
+            # === SNAPSHOT MANUALI ===
+            st.markdown("### 📸 Snapshot")
+            if st.button("📸 Crea Snapshot Manuale", use_container_width=True, help="Salva stato attuale per recovery futuro"):
+                # Mostra dialog per nota snapshot
+                st.session_state.show_manual_snapshot_dialog = True
+                st.rerun()
+
+            st.markdown("---")
+
         # Navigazione
         if st.session_state.data_loaded:
             page = st.radio(
@@ -184,7 +360,8 @@ def main():
                     "🤖 Assistente Bot",
                     "🔄 Genera DB_TNS",
                     "💾 Salvataggio & Export",
-                    "🔍 Confronto File"
+                    "📦 Gestione Versioni",
+                    "🔍 Confronto & Storico"
                 ],
                 label_visibility="collapsed"
             )
@@ -193,7 +370,7 @@ def main():
             page = st.radio(
                 "Sezione",
                 [
-                    "🔍 Confronto File"
+                    "🔍 Confronto & Storico"
                 ],
                 label_visibility="collapsed"
             )
@@ -201,7 +378,173 @@ def main():
         
         st.markdown("---")
         st.caption(f"v1.0 | {config.PAGE_TITLE}")
-    
+
+    # === MANUAL SNAPSHOT DIALOG ===
+    if st.session_state.get('show_manual_snapshot_dialog'):
+        st.markdown("---")
+        st.subheader("📸 Crea Snapshot Manuale")
+        st.caption("Salva lo stato attuale del database per poterlo ripristinare in futuro")
+
+        # Info stato attuale
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("👥 Personale", len(st.session_state.personale_df))
+        with col2:
+            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+
+        # Input nota
+        snapshot_note = st.text_input(
+            "💬 Nota snapshot (obbligatoria)",
+            placeholder="es. Prima di riorganizzazione reparto IT",
+            help="Descrivi perché stai creando questo snapshot"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Crea Snapshot", type="primary", use_container_width=True, disabled=not snapshot_note):
+                with st.spinner("Creazione snapshot in corso..."):
+                    try:
+                        from services.version_manager import VersionManager
+                        import json
+
+                        db = st.session_state.database_handler
+
+                        # Crea import_version entry per snapshot manuale
+                        version_id = db.begin_import_version(
+                            source_filename="MANUAL_SNAPSHOT",
+                            user_note=snapshot_note
+                        )
+
+                        # Complete version (no actual import, just snapshot)
+                        p_count = len(st.session_state.personale_df)
+                        s_count = len(st.session_state.strutture_df)
+
+                        db.complete_import_version(
+                            version_id, p_count, s_count,
+                            json.dumps({'type': 'manual_snapshot'})
+                        )
+
+                        # Crea snapshot
+                        vm = VersionManager(db, config.SNAPSHOTS_DIR)
+                        snapshot_path = vm.create_snapshot(
+                            import_version_id=version_id,
+                            source_filename="MANUAL_SNAPSHOT",
+                            user_note=snapshot_note
+                        )
+
+                        st.success(f"✅ Snapshot creato con successo!\n📦 {Path(snapshot_path).name}")
+                        st.session_state.show_manual_snapshot_dialog = False
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Errore creazione snapshot: {str(e)}")
+
+        with col2:
+            if st.button("❌ Annulla", use_container_width=True):
+                st.session_state.show_manual_snapshot_dialog = False
+                st.rerun()
+
+        st.stop()
+
+    # === PREVIEW MODAL (se in attesa di conferma) ===
+    if st.session_state.get('import_preview'):
+        preview = st.session_state.import_preview
+        stats = preview['stats']
+
+        st.markdown("---")
+        st.subheader("📄 Anteprima File Excel")
+        st.caption(f"File: **{preview['filename']}** ({preview['file_size_mb']:.2f} MB)")
+
+        # === CONTEGGI PRINCIPALI ===
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                "👥 Dipendenti (Personale)",
+                stats['personale_count'],
+                help="Numero totale record in TNS Personale"
+            )
+
+        with col2:
+            st.metric(
+                "🏗️ Strutture Organizzative",
+                stats['strutture_count'],
+                help="Numero totale strutture organigramma"
+            )
+
+        with col3:
+            total = stats['personale_count'] + stats['strutture_count']
+            st.metric(
+                "📊 Record Totali",
+                total,
+                help="Totale record che verranno importati"
+            )
+
+        # === ANTEPRIMA DATI (prime righe) ===
+        st.markdown("---")
+        st.markdown("### 🔍 Anteprima Dati (prime 5 righe)")
+
+        tab1, tab2 = st.tabs(["👥 Personale", "🏗️ Strutture"])
+
+        with tab1:
+            if stats['personale_count'] > 0:
+                personale_preview_df = pd.DataFrame(stats['personale_sample'])
+                st.dataframe(
+                    personale_preview_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=250
+                )
+                if stats['personale_count'] > 5:
+                    st.caption(f"... e altri {stats['personale_count'] - 5} record")
+            else:
+                st.info("Nessun record personale nel file")
+
+        with tab2:
+            if stats['strutture_count'] > 0:
+                strutture_preview_df = pd.DataFrame(stats['strutture_sample'])
+                st.dataframe(
+                    strutture_preview_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=250
+                )
+                if stats['strutture_count'] > 5:
+                    st.caption(f"... e altre {stats['strutture_count'] - 5} strutture")
+            else:
+                st.info("Nessuna struttura nel file")
+
+        # === CONFERMA CARICAMENTO ===
+        st.markdown("---")
+        st.markdown("### ✅ Conferma Caricamento")
+
+        user_note = st.text_input(
+            "💬 Nota descrittiva (opzionale)",
+            placeholder="es. Aggiornamento organigramma Q1 2026",
+            help="Nota per identificare questa versione nell'archivio"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Carica nel Database", type="primary", use_container_width=True):
+                with st.spinner("Caricamento in corso..."):
+                    success, msg = confirm_import_with_version(preview, user_note)
+                    if success:
+                        st.success(msg)
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+        with col2:
+            if st.button("❌ Annulla", use_container_width=True):
+                del st.session_state.import_preview
+                st.rerun()
+
+        st.stop()  # Blocca rendering resto pagina durante preview
+
     # Contenuto principale
     if not st.session_state.data_loaded:
         # Schermata benvenuto
@@ -300,9 +643,13 @@ def main():
             from ui.save_export_view import show_save_export_view
             show_save_export_view()
 
-        elif page == "🔍 Confronto File":
-            from ui.diff_view import show_diff_view
-            show_diff_view()
+        elif page == "📦 Gestione Versioni":
+            from ui.version_management_view import show_version_management_view
+            show_version_management_view()
+
+        elif page == "🔍 Confronto & Storico":
+            from ui.comparison_audit_view import show_comparison_audit_view
+            show_comparison_audit_view()
 
 
 if __name__ == "__main__":
