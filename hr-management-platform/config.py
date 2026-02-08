@@ -16,6 +16,9 @@ DB_DIR = DATA_DIR / "db"
 DB_PATH = DB_DIR / "app.db"
 DB_BACKUP_DIR = DB_DIR / "backups"
 
+# Percorsi snapshot versioni
+SNAPSHOTS_DIR = DATA_DIR / "snapshots"
+
 # Nomi file
 INPUT_FILE_NAME = "TNS_HR_Data.xls"
 INPUT_FILE_PATH = INPUT_DIR / INPUT_FILE_NAME

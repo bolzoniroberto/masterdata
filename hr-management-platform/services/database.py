@@ -162,6 +162,21 @@ class DatabaseHandler:
             )
             """)
 
+            # === TABELLA IMPORT_VERSIONS (versioning) ===
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS import_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                source_filename TEXT NOT NULL,
+                user_note TEXT,
+                personale_count INTEGER,
+                strutture_count INTEGER,
+                changes_summary TEXT,
+                completed BOOLEAN DEFAULT 0,
+                completed_at TIMESTAMP
+            )
+            """)
+
             # === INDICI PER PERFORMANCE ===
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_personale_cf ON personale(TxCodFiscale)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_personale_codice ON personale(Codice)")
@@ -175,12 +190,95 @@ class DatabaseHandler:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_table ON audit_log(table_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)")
 
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_import_timestamp ON import_versions(timestamp)")
+
             self.conn.commit()
             print(f"✅ Database initialized: {self.db_path}")
 
         except Exception as e:
             self.conn.rollback()
             raise Exception(f"Errore inizializzazione database: {str(e)}")
+        finally:
+            cursor.close()
+
+    # === IMPORT VERSIONING ===
+
+    def begin_import_version(self, source_filename: str, user_note: Optional[str] = None) -> int:
+        """
+        Inizia una nuova versione di import.
+
+        Args:
+            source_filename: Nome del file Excel importato
+            user_note: Nota opzionale utente
+
+        Returns:
+            ID della nuova versione import creata
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO import_versions (source_filename, user_note, completed)
+                VALUES (?, ?, 0)
+            """, (source_filename, user_note))
+            self.conn.commit()
+            version_id = cursor.lastrowid
+            print(f"✅ Import version #{version_id} iniziata: {source_filename}")
+            return version_id
+        except Exception as e:
+            self.conn.rollback()
+            raise Exception(f"Errore creazione import version: {str(e)}")
+        finally:
+            cursor.close()
+
+    def complete_import_version(self, import_version_id: int,
+                               personale_count: int, strutture_count: int,
+                               changes_summary: str) -> None:
+        """
+        Completa una versione di import con statistiche.
+
+        Args:
+            import_version_id: ID versione da completare
+            personale_count: Numero record personale importati
+            strutture_count: Numero record strutture importati
+            changes_summary: JSON summary delle modifiche (severity counts)
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE import_versions
+                SET completed = 1, completed_at = CURRENT_TIMESTAMP,
+                    personale_count = ?, strutture_count = ?, changes_summary = ?
+                WHERE id = ?
+            """, (personale_count, strutture_count, changes_summary, import_version_id))
+            self.conn.commit()
+            print(f"✅ Import version #{import_version_id} completata")
+        except Exception as e:
+            self.conn.rollback()
+            raise Exception(f"Errore completamento import version: {str(e)}")
+        finally:
+            cursor.close()
+
+    def get_import_versions(self, limit: int = 50) -> List[Dict]:
+        """
+        Ottieni lista delle versioni di import.
+
+        Args:
+            limit: Numero massimo versioni da restituire
+
+        Returns:
+            Lista dizionari con info versioni
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM import_versions
+                ORDER BY timestamp DESC LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"⚠️ Errore lettura import versions: {str(e)}")
+            return []
         finally:
             cursor.close()
 
@@ -452,11 +550,10 @@ class DatabaseHandler:
         cursor = self.conn.cursor()
 
         try:
-            # Pulisci database
+            # Pulisci database (audit_log NON viene cancellato per persistenza storico)
             cursor.execute("DELETE FROM personale")
             cursor.execute("DELETE FROM strutture")
             cursor.execute("DELETE FROM db_tns")
-            cursor.execute("DELETE FROM audit_log")
 
             personale_count = 0
             strutture_count = 0
@@ -630,8 +727,10 @@ class DatabaseHandler:
         }
 
     def _log_audit(self, operation: str, table_name: str, record_key: str,
-                  before: Optional[Dict] = None, after: Optional[Dict] = None):
-        """Log operazione audit"""
+                  before: Optional[Dict] = None, after: Optional[Dict] = None,
+                  import_version_id: Optional[int] = None,
+                  field_name: Optional[str] = None):
+        """Log operazione audit con versioning e severity classification"""
         import json
 
         cursor = self.conn.cursor()
@@ -639,17 +738,68 @@ class DatabaseHandler:
             before_json = json.dumps(before, default=str) if before else None
             after_json = json.dumps(after, default=str) if after else None
 
-            cursor.execute("""
-            INSERT INTO audit_log
-            (table_name, operation, record_key, before_values, after_values)
-            VALUES (?, ?, ?, ?, ?)
-            """, (table_name, operation, record_key, before_json, after_json))
+            # Classifica severity della modifica
+            severity = self._classify_change_severity(field_name, before, after)
+
+            # Check if new columns exist (for backward compatibility)
+            cursor.execute("PRAGMA table_info(audit_log)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'import_version_id' in columns and 'change_severity' in columns and 'field_name' in columns:
+                # New schema with versioning
+                cursor.execute("""
+                INSERT INTO audit_log
+                (table_name, operation, record_key, before_values, after_values,
+                 import_version_id, change_severity, field_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (table_name, operation, record_key, before_json, after_json,
+                      import_version_id, severity, field_name))
+            else:
+                # Old schema (backward compatible)
+                cursor.execute("""
+                INSERT INTO audit_log
+                (table_name, operation, record_key, before_values, after_values)
+                VALUES (?, ?, ?, ?, ?)
+                """, (table_name, operation, record_key, before_json, after_json))
 
             self.conn.commit()
         except Exception as e:
             print(f"⚠️ Errore logging audit: {str(e)}")
         finally:
             cursor.close()
+
+    def _classify_change_severity(self, field_name: Optional[str],
+                                  before: Optional[Dict], after: Optional[Dict]) -> str:
+        """
+        Classifica la gravità di una modifica basata sul campo modificato.
+
+        CRITICAL: Approvatore, Controllore, Cassiere, Viaggiatore
+        HIGH: UNITA_OPERATIVA_PADRE, Codice, DESCRIZIONE
+        MEDIUM: Titolare, Unità_Organizzativa, Sede_TNS, Segretario
+        LOW: Altri campi
+        """
+        if not field_name:
+            return 'MEDIUM'
+
+        field_lower = field_name.replace('_', ' ').lower()
+
+        # Campi critici per workflow approvazione
+        critical_fields = ['approvatore', 'controllore', 'cassiere', 'viaggiatore']
+        if any(cf in field_lower for cf in critical_fields):
+            return 'CRITICAL'
+
+        # Campi strutturali importanti
+        high_fields = ['unita operativa padre', 'codice', 'descrizione']
+        if any(hf in field_lower for hf in high_fields):
+            return 'HIGH'
+
+        # Campi informativi importanti
+        medium_fields = ['titolare', 'unità organizzativa', 'sede', 'segretario']
+        if any(mf in field_lower for mf in medium_fields):
+            return 'MEDIUM'
+
+        # Tutti gli altri campi
+        return 'LOW'
 
     def close(self):
         """Chiudi connessione database"""
