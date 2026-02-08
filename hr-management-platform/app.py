@@ -82,13 +82,49 @@ def load_excel_to_staging(uploaded_file):
         personale_result = validator.validate_personale(personale)
         if not personale_result.is_valid():
             error_summary = personale_result.get_summary()
-            return False, f"❌ Errori validazione Personale:\n{error_summary}"
+            # Mostra primi 10 errori dettagliati
+            first_errors = personale_result.errors[:10]
+            error_details = "\n".join([
+                f"- Riga {e['row']}, campo '{e['field']}': {e['message']}"
+                for e in first_errors
+            ])
+            more_msg = f"\n... e altri {len(personale_result.errors) - 10} errori" if len(personale_result.errors) > 10 else ""
+            return False, f"""❌ **Errori validazione Personale**
+
+{error_summary}
+
+**Primi errori:**
+{error_details}{more_msg}
+
+**Suggerimento:** Verifica il file Excel per questi problemi comuni:
+- Codici Fiscali mancanti o formato errato (16 caratteri alfanumerici)
+- Campi obbligatori vuoti (Titolare, Codice, Unità Organizzativa)
+- Caratteri speciali o formati non validi
+"""
 
         # Valida strutture
         strutture_result = validator.validate_strutture(strutture)
         if not strutture_result.is_valid():
             error_summary = strutture_result.get_summary()
-            return False, f"❌ Errori validazione Strutture:\n{error_summary}"
+            # Mostra primi 10 errori dettagliati
+            first_errors = strutture_result.errors[:10]
+            error_details = "\n".join([
+                f"- Riga {e['row']}, campo '{e['field']}': {e['message']}"
+                for e in first_errors
+            ])
+            more_msg = f"\n... e altri {len(strutture_result.errors) - 10} errori" if len(strutture_result.errors) > 10 else ""
+            return False, f"""❌ **Errori validazione Strutture**
+
+{error_summary}
+
+**Primi errori:**
+{error_details}{more_msg}
+
+**Suggerimento:** Verifica il file Excel per questi problemi comuni:
+- Codici struttura mancanti o duplicati
+- Descrizioni mancanti
+- Riferimenti a strutture padre inesistenti
+"""
 
         # Salva in STAGING (non ancora nel database!)
         st.session_state.excel_staging = {
