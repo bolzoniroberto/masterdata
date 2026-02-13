@@ -25,6 +25,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Inizializza session state per UI
+if 'sidebar_collapsed' not in st.session_state:
+    st.session_state.sidebar_collapsed = False
+if 'compare_versions' not in st.session_state:
+    st.session_state.compare_versions = False
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "📊 Dashboard Home"
+
 # Inizializzazione session state
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
@@ -48,7 +56,13 @@ if st.session_state.database_handler:
         from migrations.migration_001_add_import_versioning import migrate
         migrate(config.DB_PATH)
     except Exception as e:
-        print(f"⚠️ Warning: Migration failed: {str(e)}")
+        print(f"⚠️ Warning: Migration 001 failed: {str(e)}")
+
+    try:
+        from migrations.migration_002_add_checkpoint_milestone import migrate as migrate_002
+        migrate_002(config.DB_PATH)
+    except Exception as e:
+        print(f"⚠️ Warning: Migration 002 failed: {str(e)}")
 
 
 def load_excel_to_staging(uploaded_file):
@@ -389,6 +403,172 @@ def confirm_import_with_version(preview_data: dict, user_note: str = ""):
         return False, f"Errore conferma import: {str(e)}"
 
 
+def show_top_toolbar():
+    """
+    Mostra toolbar superiore con bottoni Checkpoint e Milestone.
+    Sempre visibile, ma bottoni disabilitati se dati non caricati.
+    """
+    # CSS per header fisso e miglioramenti UI
+    st.markdown("""
+    <style>
+    /* Header fisso in alto */
+    .main-header {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: linear-gradient(180deg, var(--background-color) 0%, var(--background-color) 90%, transparent 100%);
+        padding: 1rem 0 1.5rem 0;
+        border-bottom: 2px solid var(--primary-color);
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    /* Toolbar sempre visibile */
+    .toolbar-container {
+        background: linear-gradient(135deg, var(--secondary-background-color) 0%, var(--secondary-background-color) 100%);
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid rgba(128,128,128,0.2);
+    }
+
+    /* Breadcrumb style */
+    .breadcrumb {
+        font-size: 0.9rem;
+        color: var(--text-color);
+        opacity: 0.8;
+        margin-bottom: 0.5rem;
+        padding: 0.5rem 0;
+        font-weight: 500;
+    }
+
+    .breadcrumb b {
+        color: var(--primary-color);
+    }
+
+    /* Migliora spacing generale */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+
+    /* Stile bottoni migliorato */
+    .stButton button {
+        transition: all 0.2s ease;
+    }
+
+    .stButton button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    /* Sidebar migliorata */
+    section[data-testid="stSidebar"] {
+        background-color: var(--secondary-background-color);
+        border-right: 2px solid var(--primary-color);
+    }
+
+    /* Menu sections headers */
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3 {
+        font-size: 0.9rem;
+        margin-top: 1.5rem;
+        margin-bottom: 0.5rem;
+        opacity: 0.8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Menu buttons spacing */
+    section[data-testid="stSidebar"] .stButton {
+        margin-bottom: 0.25rem;
+    }
+
+    /* Section headers in sidebar */
+    section[data-testid="stSidebar"] p strong {
+        display: block;
+        font-size: 0.75rem;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        color: var(--text-color);
+        opacity: 0.6;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Expander in sidebar (Operazioni Avanzate) */
+    section[data-testid="stSidebar"] .streamlit-expanderHeader {
+        font-size: 0.85rem;
+        font-weight: 500;
+        background-color: rgba(128, 128, 128, 0.1);
+        border-radius: 0.3rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    section[data-testid="stSidebar"] .streamlit-expanderContent {
+        padding: 0.5rem 0;
+        border-left: 2px solid rgba(128, 128, 128, 0.2);
+        margin-left: 0.5rem;
+        padding-left: 0.5rem;
+    }
+
+    /* Caption styling in sidebar */
+    section[data-testid="stSidebar"] .caption {
+        font-size: 0.7rem;
+        opacity: 0.5;
+        margin-bottom: 0.5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    data_loaded = st.session_state.data_loaded
+
+    # Container toolbar con sfondo
+    st.markdown('<div class="toolbar-container">', unsafe_allow_html=True)
+
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 2])
+
+    with col1:
+        if data_loaded:
+            p_count = len(st.session_state.personale_df) if st.session_state.personale_df is not None else 0
+            s_count = len(st.session_state.strutture_df) if st.session_state.strutture_df is not None else 0
+            st.markdown(f"**📊 Dati:** {p_count} personale · {s_count} strutture")
+        else:
+            st.markdown("**📊 Azioni Rapide**")
+
+    with col2:
+        if st.button("💾 Checkpoint", use_container_width=True,
+                     disabled=not data_loaded,
+                     help="Salvataggio veloce stato attuale" if data_loaded else "Carica dati prima"):
+            st.session_state.show_checkpoint_dialog = True
+            st.rerun()
+
+    with col3:
+        if st.button("🏁 Milestone", use_container_width=True,
+                     disabled=not data_loaded,
+                     help="Milestone certificata con nota" if data_loaded else "Carica dati prima"):
+            st.session_state.show_milestone_dialog = True
+            st.rerun()
+
+    with col4:
+        if st.button("🔍 Ricerca", use_container_width=True,
+                     disabled=not data_loaded,
+                     help="Ricerca intelligente" if data_loaded else "Carica dati prima"):
+            st.session_state.current_page = "🔍 Ricerca Intelligente"
+            st.rerun()
+
+    with col5:
+        # Info utente/sessione
+        if data_loaded:
+            st.markdown("**✅ Database attivo**")
+        else:
+            st.markdown("**⚠️ Carica dati**")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 def load_data_from_db():
     """
     Carica dati dal database SQLite in session state.
@@ -434,136 +614,228 @@ def main():
             print(f"⚠️ Auto-load error: {str(e)}")
             pass  # Database vuoto o errore, continua a chiedere upload
 
-    # Header
+    # === TOP TOOLBAR (sempre visibile) ===
+    show_top_toolbar()
+
+    # Header principale (fisso)
+    st.markdown('<div class="main-header">', unsafe_allow_html=True)
     st.title("✈️ Travel & Expense Approval Management")
-    st.subheader("Gruppo Il Sole 24 ORE - Gestione Ruoli Approvazione")
+    st.caption("Gruppo Il Sole 24 ORE - Gestione Ruoli Approvazione")
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Sidebar per navigazione
     with st.sidebar:
         st.header("📋 Menu")
 
-        # Upload file
+        # === PRIMO IMPORT (solo se DB vuoto) ===
         if not st.session_state.data_loaded:
             st.markdown("### 📁 Primo Import")
             st.info("👋 **Database vuoto**\n\nCarica un file Excel per iniziare")
-        else:
-            st.markdown("### 📁 Carica File Excel")
 
-        # Toggle preview
-        show_preview = st.checkbox(
-            "🔍 Mostra anteprima file",
-            value=True,
-            help="Visualizza contenuto file prima di caricare nel database"
-        )
+            uploaded_file = st.file_uploader(
+                "Carica file TNS (.xls/.xlsx)",
+                type=['xls', 'xlsx'],
+                help="File Excel con fogli 'TNS Personale' e 'TNS Strutture'"
+            )
 
-        uploaded_file = st.file_uploader(
-            "Carica file TNS (.xls/.xlsx)",
-            type=['xls', 'xlsx'],
-            help="File Excel con fogli 'TNS Personale' e 'TNS Strutture'"
-        )
+            # Helper per primo import
+            if uploaded_file is None:
+                with st.expander("💡 File di esempio", expanded=False):
+                    st.caption("Puoi usare il file di test:")
+                    st.code("data/input/TNS_HR_Data.xls", language=None)
+                    st.caption("Trascinalo nel box sopra ⬆️")
 
-        # Helper per primo import
-        if not st.session_state.data_loaded and uploaded_file is None:
-            with st.expander("💡 File di esempio", expanded=False):
-                st.caption("Puoi usare il file di test:")
-                st.code("data/input/TNS_HR_Data.xls", language=None)
-                st.caption("Trascinalo nel box sopra ⬆️")
+            if uploaded_file is not None:
+                # Mostra info file immediatamente
+                st.caption(f"📄 **{uploaded_file.name}**")
+                file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+                st.caption(f"💾 Dimensione: {file_size_mb:.2f} MB")
 
-        if uploaded_file is not None:
-            # Mostra info file immediatamente
-            st.caption(f"📄 **{uploaded_file.name}**")
-            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
-            st.caption(f"💾 Dimensione: {file_size_mb:.2f} MB")
+                # Check if already in staging mode
+                if not st.session_state.get('excel_staging'):
+                    # Load Excel to staging area (NOT yet in database)
+                    with st.spinner("Caricamento file Excel in memoria..."):
+                        success, message = load_excel_to_staging(uploaded_file)
 
-        if uploaded_file is not None and not st.session_state.data_loaded:
-            # Check if already in staging mode
-            if not st.session_state.get('excel_staging'):
-                # Load Excel to staging area (NOT yet in database)
-                with st.spinner("Caricamento file Excel in memoria..."):
-                    success, message = load_excel_to_staging(uploaded_file)
-
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
-
-        st.markdown("---")
-
-        # === PULSANTE RESET DATABASE ===
-        if st.session_state.data_loaded:
-            st.markdown("### 🔄 Database Manager")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📤 Re-import Excel", use_container_width=True):
-                    # Pulisci tutti gli stati
-                    st.session_state.data_loaded = False
-                    if 'excel_staging' in st.session_state:
-                        del st.session_state.excel_staging
-                    if 'import_preview' in st.session_state:
-                        del st.session_state.import_preview
-                    if 'personale_df' in st.session_state:
-                        del st.session_state.personale_df
-                    if 'strutture_df' in st.session_state:
-                        del st.session_state.strutture_df
-                    st.info("✅ Database resettato. Carica un nuovo file Excel dalla sidebar.")
-                    st.rerun()
-
-            with col2:
-                if st.button("🗑️ Clear Database", use_container_width=True):
-                    try:
-                        cursor = st.session_state.database_handler.conn.cursor()
-                        cursor.execute("DELETE FROM personale")
-                        cursor.execute("DELETE FROM strutture")
-                        cursor.execute("DELETE FROM db_tns")
-                        st.session_state.database_handler.conn.commit()
-                        st.session_state.data_loaded = False
-                        st.success("Database azzerato")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore: {str(e)}")
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
 
             st.markdown("---")
 
-            # === SNAPSHOT MANUALI ===
-            st.markdown("### 📸 Snapshot")
-            if st.button("📸 Crea Snapshot Manuale", use_container_width=True, help="Salva stato attuale per recovery futuro"):
-                # Mostra dialog per nota snapshot
-                st.session_state.show_manual_snapshot_dialog = True
+        # Navigazione - MENU STRUTTURATO PULITO
+        if st.session_state.data_loaded:
+            st.markdown("### 🧭 Navigazione")
+
+            # === DASHBOARD ===
+            if st.button("📊 Dashboard Home", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "📊 Dashboard Home" else "secondary"):
+                st.session_state.current_page = "📊 Dashboard Home"
                 st.rerun()
 
-            st.markdown("---")
+            if st.button("🌳 Organigramma", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "🌳 Organigramma" else "secondary",
+                         help="Vista albero e grafico dell'organigramma aziendale"):
+                st.session_state.current_page = "🌳 Organigramma"
+                st.rerun()
 
-        # Navigazione
-        if st.session_state.data_loaded:
-            page = st.radio(
-                "Sezione",
-                [
-                    "📊 Dashboard",
-                    "🏗️ Gestione Strutture",
-                    "👥 Gestione Personale",
-                    "🎭 Gestione Ruoli",
-                    "🤖 Assistente Bot",
-                    "🔄 Genera DB_TNS",
-                    "💾 Salvataggio & Export",
-                    "📦 Gestione Versioni",
-                    "🔍 Confronto & Storico"
-                ],
-                label_visibility="collapsed"
-            )
+            st.markdown("**Gestione Dati**")
+
+            # === GESTIONE ===
+            if st.button("👥 Gestione Personale", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "👥 Gestione Personale" else "secondary"):
+                st.session_state.current_page = "👥 Gestione Personale"
+                st.rerun()
+
+            if st.button("🏗️ Gestione Strutture", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "🏗️ Gestione Strutture" else "secondary"):
+                st.session_state.current_page = "🏗️ Gestione Strutture"
+                st.rerun()
+
+            if st.button("🎭 Gestione Ruoli", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "🎭 Gestione Ruoli" else "secondary"):
+                st.session_state.current_page = "🎭 Gestione Ruoli"
+                st.rerun()
+
+            st.markdown("**Ricerca & Analisi**")
+
+            # === RICERCA & ANALISI ===
+            if st.button("🔍 Ricerca Intelligente", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "🔍 Ricerca Intelligente" else "secondary"):
+                st.session_state.current_page = "🔍 Ricerca Intelligente"
+                st.rerun()
+
+            if st.button("⚖️ Confronta Versioni", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "⚖️ Confronta Versioni" else "secondary"):
+                st.session_state.current_page = "⚖️ Confronta Versioni"
+                st.rerun()
+
+            if st.button("📖 Log Modifiche", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "📖 Log Modifiche" else "secondary"):
+                st.session_state.current_page = "📖 Log Modifiche"
+                st.rerun()
+
+            # === OPERAZIONI AVANZATE (collassate) ===
+            st.markdown("---")
+            with st.expander("🔧 Operazioni Avanzate", expanded=False):
+                st.caption("Operazioni occasionali e amministrazione")
+
+                # Database Management
+                st.markdown("**Gestione Database**")
+
+                uploaded_file_adv = st.file_uploader(
+                    "📤 Re-import Excel",
+                    type=['xls', 'xlsx'],
+                    help="Carica nuovo file per sostituire dati esistenti",
+                    key="upload_advanced"
+                )
+
+                if uploaded_file_adv is not None:
+                    st.warning("⚠️ **Attenzione**: Re-import sovrascrive tutti i dati!")
+                    if st.button("✅ Conferma Re-import", type="primary", use_container_width=True):
+                        # Reset e reload
+                        st.session_state.data_loaded = False
+                        if 'excel_staging' in st.session_state:
+                            del st.session_state.excel_staging
+                        st.rerun()
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("📸 Snapshot Manuale", use_container_width=True, key="adv_snapshot",
+                                help="Crea snapshot manuale dello stato attuale"):
+                        st.session_state.show_manual_snapshot_dialog = True
+                        st.rerun()
+
+                with col2:
+                    if st.button("🗑️ Svuota DB", use_container_width=True, key="adv_clear",
+                                help="Elimina tutti i dati dal database"):
+                        st.session_state.show_clear_db_confirm = True
+                        st.rerun()
+
+                st.markdown("---")
+                st.markdown("**Export & Versioning**")
+
+                if st.button("📦 Gestione Versioni", use_container_width=True, key="adv_versions",
+                             type="primary" if st.session_state.current_page == "📦 Gestione Versioni" else "secondary"):
+                    st.session_state.current_page = "📦 Gestione Versioni"
+                    st.rerun()
+
+                if st.button("🔄 Genera DB_TNS", use_container_width=True, key="adv_dbtns",
+                             type="primary" if st.session_state.current_page == "🔄 Genera DB_TNS" else "secondary"):
+                    st.session_state.current_page = "🔄 Genera DB_TNS"
+                    st.rerun()
+
+                if st.button("💾 Export File", use_container_width=True, key="adv_export",
+                             type="primary" if st.session_state.current_page == "💾 Salvataggio & Export" else "secondary"):
+                    st.session_state.current_page = "💾 Salvataggio & Export"
+                    st.rerun()
+
+                st.markdown("---")
+                st.markdown("**Verifica & Debug**")
+
+                if st.button("🔍 Verifica Consistenza", use_container_width=True, key="adv_sync_check",
+                             type="primary" if st.session_state.current_page == "🔍 Verifica Consistenza" else "secondary",
+                             help="Verifica consistenza DB-Excel per responsabili e approvatori"):
+                    st.session_state.current_page = "🔍 Verifica Consistenza"
+                    st.rerun()
+
+            page = st.session_state.current_page
         else:
-            # Vista confronto disponibile anche senza file caricato
-            page = st.radio(
-                "Sezione",
-                [
-                    "🔍 Confronto & Storico"
-                ],
-                label_visibility="collapsed"
-            )
+            # Vista disponibile anche senza file caricato
+            st.markdown("### 🧭 Navigazione")
+
+            st.caption("Funzioni disponibili senza dati:")
+
+            if st.button("⚖️ Confronta Versioni", use_container_width=True,
+                         type="primary" if st.session_state.current_page == "⚖️ Confronta Versioni" else "secondary"):
+                st.session_state.current_page = "⚖️ Confronta Versioni"
+                st.rerun()
+
+            with st.expander("🔧 Operazioni Avanzate", expanded=False):
+                if st.button("📦 Gestione Versioni", use_container_width=True, key="nodb_versions",
+                             type="primary" if st.session_state.current_page == "📦 Gestione Versioni" else "secondary"):
+                    st.session_state.current_page = "📦 Gestione Versioni"
+                    st.rerun()
+
             st.info("📤 Carica un file Excel per accedere a tutte le funzionalità")
+
+            page = st.session_state.current_page
         
         st.markdown("---")
-        st.caption(f"v1.0 | {config.PAGE_TITLE}")
+
+        # === INFO SIDEBAR FOOTER ===
+        if st.session_state.data_loaded:
+            with st.expander("ℹ️ Info Database", expanded=False):
+                try:
+                    # Ottieni ultima modifica
+                    cursor = st.session_state.database_handler.conn.cursor()
+                    cursor.execute("SELECT MAX(timestamp) FROM audit_log")
+                    last_mod = cursor.fetchone()[0]
+                    cursor.close()
+
+                    if last_mod:
+                        st.caption(f"**Ultima modifica:** {last_mod[:19]}")
+                    else:
+                        st.caption("**Nessuna modifica** registrata")
+
+                    # Conta versioni
+                    cursor = st.session_state.database_handler.conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM import_versions WHERE completed = 1")
+                    version_count = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM import_versions WHERE completed = 1 AND certified = 1")
+                    milestone_count = cursor.fetchone()[0]
+                    cursor.close()
+
+                    st.caption(f"**Versioni:** {version_count} ({milestone_count} milestone)")
+
+                except Exception as e:
+                    st.caption(f"Info non disponibile")
+
+        st.markdown("---")
+        st.caption(f"**v2.0** | UX Redesign")
+        st.caption(f"{config.PAGE_TITLE[:30]}...")
 
     # === MANUAL SNAPSHOT DIALOG ===
     if st.session_state.get('show_manual_snapshot_dialog'):
@@ -629,6 +901,165 @@ def main():
         with col2:
             if st.button("❌ Annulla", use_container_width=True):
                 st.session_state.show_manual_snapshot_dialog = False
+                st.rerun()
+
+        st.stop()
+
+    # === CHECKPOINT DIALOG ===
+    if st.session_state.get('show_checkpoint_dialog'):
+        st.markdown("---")
+        st.subheader("💾 Crea Checkpoint Veloce")
+        st.caption("Salvataggio rapido dello stato attuale per backup/recovery")
+
+        # Info stato
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("👥 Personale", len(st.session_state.personale_df))
+        with col2:
+            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+
+        # Nota opzionale
+        checkpoint_note = st.text_input(
+            "💬 Nota (opzionale)",
+            placeholder="es. Prima di modifiche batch reparto IT",
+            help="Lascia vuoto per auto-generare nota con timestamp"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Crea Checkpoint", type="primary", use_container_width=True):
+                with st.spinner("Creazione checkpoint..."):
+                    try:
+                        from services.version_manager import VersionManager
+                        vm = VersionManager(st.session_state.database_handler, config.SNAPSHOTS_DIR)
+
+                        success, message, snapshot_path = vm.create_checkpoint(checkpoint_note)
+
+                        if success:
+                            st.success(message)
+                            st.session_state.show_checkpoint_dialog = False
+                            st.rerun()
+                        else:
+                            st.error(message)
+
+                    except Exception as e:
+                        st.error(f"❌ Errore: {str(e)}")
+
+        with col2:
+            if st.button("❌ Annulla", use_container_width=True):
+                st.session_state.show_checkpoint_dialog = False
+                st.rerun()
+
+        st.stop()
+
+    # === MILESTONE DIALOG ===
+    if st.session_state.get('show_milestone_dialog'):
+        st.markdown("---")
+        st.subheader("🏁 Crea Milestone Certificata")
+        st.caption("Versione ufficiale con descrizione dettagliata dei cambiamenti")
+
+        # Info stato
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("👥 Personale", len(st.session_state.personale_df))
+        with col2:
+            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+
+        # Nota obbligatoria
+        milestone_note = st.text_input(
+            "💬 Titolo Milestone (obbligatorio) *",
+            placeholder="es. Riorganizzazione Q1 2026",
+            help="Titolo breve e descrittivo della milestone"
+        )
+
+        # Descrizione obbligatoria
+        milestone_description = st.text_area(
+            "📝 Descrizione Cambiamenti (obbligatoria) *",
+            placeholder="Descrivi dettagliatamente i cambiamenti:\n- Nuovo organigramma IT\n- Assegnazione approvatori\n- Aggiornamento strutture regionali",
+            height=150,
+            help="Descrizione completa dei cambiamenti inclusi in questa milestone"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            can_create = bool(milestone_note and milestone_description)
+            if st.button("✅ Crea Milestone", type="primary", use_container_width=True,
+                         disabled=not can_create):
+                with st.spinner("Creazione milestone certificata..."):
+                    try:
+                        from services.version_manager import VersionManager
+                        vm = VersionManager(st.session_state.database_handler, config.SNAPSHOTS_DIR)
+
+                        success, message, snapshot_path = vm.create_milestone(
+                            milestone_note, milestone_description
+                        )
+
+                        if success:
+                            st.success(message)
+                            st.balloons()
+                            st.session_state.show_milestone_dialog = False
+                            st.rerun()
+                        else:
+                            st.error(message)
+
+                    except Exception as e:
+                        st.error(f"❌ Errore: {str(e)}")
+
+        with col2:
+            if st.button("❌ Annulla", use_container_width=True):
+                st.session_state.show_milestone_dialog = False
+                st.rerun()
+
+        if not can_create:
+            st.warning("⚠️ Nota e descrizione sono obbligatorie per le milestone")
+
+        st.stop()
+
+    # === CLEAR DATABASE CONFIRMATION DIALOG ===
+    if st.session_state.get('show_clear_db_confirm'):
+        st.markdown("---")
+        st.error("### 🗑️ Conferma Eliminazione Database")
+        st.warning("⚠️ **ATTENZIONE**: Questa operazione eliminerà **TUTTI** i dati dal database!")
+
+        st.markdown("**Dati che verranno eliminati:**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("👥 Personale", len(st.session_state.personale_df))
+        with col2:
+            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+
+        st.markdown("💡 **Suggerimento**: Crea un checkpoint prima di eliminare")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("💾 Checkpoint Prima", use_container_width=True):
+                st.session_state.show_checkpoint_dialog = True
+                st.session_state.show_clear_db_confirm = False
+                st.rerun()
+
+        with col2:
+            confirm_text = st.text_input("Scrivi ELIMINA per confermare", key="confirm_clear")
+            if st.button("🗑️ ELIMINA DATABASE", type="primary", use_container_width=True,
+                        disabled=(confirm_text != "ELIMINA")):
+                try:
+                    cursor = st.session_state.database_handler.conn.cursor()
+                    cursor.execute("DELETE FROM personale")
+                    cursor.execute("DELETE FROM strutture")
+                    cursor.execute("DELETE FROM db_tns")
+                    st.session_state.database_handler.conn.commit()
+                    st.session_state.data_loaded = False
+                    st.session_state.show_clear_db_confirm = False
+                    st.success("✅ Database eliminato")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Errore: {str(e)}")
+
+        with col3:
+            if st.button("❌ Annulla", use_container_width=True):
+                st.session_state.show_clear_db_confirm = False
                 st.rerun()
 
         st.stop()
@@ -910,42 +1341,61 @@ def main():
             """)
     
     else:
-        # Routing pagine
-        if page == "📊 Dashboard":
+        # === BREADCRUMB / PAGE INDICATOR ===
+        page = st.session_state.current_page
+
+        # Mostra breadcrumb
+        st.markdown(f'<div class="breadcrumb">📍 Sei qui: <b>{page}</b></div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # Routing pagine - NUOVO MENU
+        if page == "📊 Dashboard Home":
             from ui.dashboard import show_dashboard
             show_dashboard()
-        
-        elif page == "🏗️ Gestione Strutture":
-            from ui.strutture_view import show_strutture_view
-            show_strutture_view()
-        
+
+        elif page == "🌳 Organigramma":
+            from ui.organigramma_view import show_organigramma_view
+            show_organigramma_view()
+
         elif page == "👥 Gestione Personale":
             from ui.personale_view import show_personale_view
             show_personale_view()
+
+        elif page == "🏗️ Gestione Strutture":
+            from ui.strutture_view import show_strutture_view
+            show_strutture_view()
 
         elif page == "🎭 Gestione Ruoli":
             from ui.ruoli_view import show_ruoli_view
             show_ruoli_view()
 
-        elif page == "🤖 Assistente Bot":
-            from ui.chatbot_view import show_chatbot_view
-            show_chatbot_view()
+        elif page == "🔍 Ricerca Intelligente":
+            from ui.search_view import show_search_view
+            show_search_view()
 
-        elif page == "🔄 Genera DB_TNS":
-            from ui.merger_view import show_merger_view
-            show_merger_view()
-        
-        elif page == "💾 Salvataggio & Export":
-            from ui.save_export_view import show_save_export_view
-            show_save_export_view()
+        elif page == "⚖️ Confronta Versioni":
+            from ui.compare_view import show_compare_view
+            show_compare_view()
+
+        elif page == "📖 Log Modifiche":
+            from ui.audit_log_view import show_audit_log_view
+            show_audit_log_view()
 
         elif page == "📦 Gestione Versioni":
             from ui.version_management_view import show_version_management_view
             show_version_management_view()
 
-        elif page == "🔍 Confronto & Storico":
-            from ui.comparison_audit_view import show_comparison_audit_view
-            show_comparison_audit_view()
+        elif page == "🔄 Genera DB_TNS":
+            from ui.merger_view import show_merger_view
+            show_merger_view()
+
+        elif page == "💾 Salvataggio & Export":
+            from ui.save_export_view import show_save_export_view
+            show_save_export_view()
+
+        elif page == "🔍 Verifica Consistenza":
+            from ui.sync_check_view import show_sync_check_view
+            show_sync_check_view()
 
 
 if __name__ == "__main__":
