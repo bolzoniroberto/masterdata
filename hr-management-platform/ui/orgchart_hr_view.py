@@ -26,7 +26,7 @@ def render_orgchart_hr_view():
     lookup_service = get_lookup_service()
 
     # ========== FILTERS & SEARCH ==========
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
 
     with col1:
         search_query = st.text_input(
@@ -48,8 +48,43 @@ def render_orgchart_hr_view():
         )
 
     with col4:
+        show_orphans_only = st.checkbox(
+            "👤 Solo Orfani",
+            value=False,
+            key="org_hr_orphans",
+            help="Mostra solo nodi senza responsabile (orfani)"
+        )
+
+    with col5:
         st.button("📥 Export PNG", use_container_width=True, disabled=True,
                   help="Disponibile nel layout Albero con tasto destro → Salva immagine")
+
+    # Advanced filters in expander
+    with st.expander("🔧 Filtri Avanzati", expanded=False):
+        fcol1, fcol2, fcol3 = st.columns(3)
+
+        with fcol1:
+            min_employees = st.number_input(
+                "Min. dipendenti",
+                min_value=0,
+                value=0,
+                key="org_hr_min_emp",
+                help="Mostra solo nodi con almeno N dipendenti"
+            )
+
+        with fcol2:
+            has_responsible_filter = st.selectbox(
+                "Ha responsabile",
+                options=["Tutti", "Sì", "No"],
+                key="org_hr_has_resp"
+            )
+
+        with fcol3:
+            node_depth_filter = st.selectbox(
+                "Livello gerarchico",
+                options=["Tutti"] + [f"Livello {i}" for i in range(1, 6)],
+                key="org_hr_depth"
+            )
 
     # ========== LOAD DATA ==========
     with st.spinner("Caricamento organigramma…"):
@@ -65,7 +100,91 @@ def render_orgchart_hr_view():
                 st.info("Verifica che siano state importate strutture nel database.")
                 return
 
-            hierarchy_json = json.dumps(nodes, ensure_ascii=False)
+            # Enrich nodes with additional info for tooltips
+            for node in nodes:
+                # Get full employee details for this node
+                emp_details = orgchart_service._query("""
+                    SELECT
+                        titolare, tx_cod_fiscale, area, sede, qualifica,
+                        societa, email, data_assunzione, contratto
+                    FROM employees
+                    WHERE tx_cod_fiscale = ?
+                """, (node['id'],))
+
+                if emp_details:
+                    emp = emp_details[0]
+                    node['full_name'] = emp['titolare'] or node['name']
+                    node['cf'] = emp['tx_cod_fiscale'] or ''
+                    node['area'] = emp['area'] or 'N/D'
+                    node['sede'] = emp['sede'] or 'N/D'
+                    node['qualifica'] = emp['qualifica'] or 'N/D'
+                    node['societa'] = emp['societa'] or 'N/D'
+                    node['email'] = emp['email'] or 'N/D'
+                    node['data_assunzione'] = emp['data_assunzione'] or 'N/D'
+                    node['contratto'] = emp['contratto'] or 'N/D'
+                else:
+                    # Virtual ROOT or no details
+                    node['full_name'] = node['name']
+                    node['cf'] = node['id'] if node['id'] != 'ROOT' else ''
+                    node['area'] = 'N/D'
+                    node['sede'] = 'N/D'
+                    node['qualifica'] = 'N/D'
+                    node['societa'] = 'N/D'
+                    node['email'] = 'N/D'
+                    node['data_assunzione'] = 'N/D'
+                    node['contratto'] = 'N/D'
+
+            # Count orphans (nodes with parentId='ROOT' but not ROOT itself)
+            orphans = [n for n in nodes if n.get('parentId') == 'ROOT' and n['id'] != 'ROOT']
+            orphans_count = len(orphans)
+
+            # Apply filters
+            filtered_nodes = nodes
+            if show_orphans_only:
+                # Orphans are nodes where parentId is 'ROOT' but id is not 'ROOT'
+                filtered_nodes = orphans
+
+            if has_responsible_filter != "Tutti":
+                if has_responsible_filter == "Sì":
+                    filtered_nodes = [n for n in filtered_nodes if n.get('has_responsible')]
+                else:
+                    filtered_nodes = [n for n in filtered_nodes if not n.get('has_responsible')]
+
+            if min_employees > 0:
+                filtered_nodes = [n for n in filtered_nodes if n.get('employee_count', 0) >= min_employees]
+
+            hierarchy_json = json.dumps(filtered_nodes if show_orphans_only or min_employees > 0 or has_responsible_filter != "Tutti" else nodes, ensure_ascii=False)
+
+            # Create filters config for JavaScript
+            filters_config = {
+                'showOrphansOnly': show_orphans_only,
+                'minEmployees': min_employees,
+                'hasResponsible': has_responsible_filter,
+                'depthLevel': -1 if node_depth_filter == "Tutti" else int(node_depth_filter.split()[-1]) if node_depth_filter != "Tutti" else -1
+            }
+            filters_json = json.dumps(filters_config)
+
+            # Show orphans alert if any found
+            if orphans_count > 0:
+                st.warning(f"⚠️ **{orphans_count} nodi orfani** rilevati (senza responsabile diretto)", icon="👤")
+
+                # Show orphans list in expander
+                with st.expander(f"📋 Dettagli {orphans_count} Orfani", expanded=False):
+                    orphans_df_data = []
+                    for orphan in orphans[:20]:  # Limit to first 20 for performance
+                        orphans_df_data.append({
+                            'Nome': orphan.get('full_name', orphan.get('name')),
+                            'CF': orphan.get('cf', orphan.get('id')),
+                            'Area': orphan.get('area', 'N/D'),
+                            'Sede': orphan.get('sede', 'N/D'),
+                            'Dipendenti': orphan.get('employee_count', 0)
+                        })
+                    if orphans_df_data:
+                        import pandas as pd
+                        orphans_df = pd.DataFrame(orphans_df_data)
+                        st.dataframe(orphans_df, use_container_width=True, hide_index=True)
+                        if orphans_count > 20:
+                            st.caption(f"Mostrati primi 20 di {orphans_count} orfani totali")
 
             # Employees grouped by manager (for modal detail popup)
             # Group employees by their reports_to_cf (manager CF)
@@ -266,6 +385,7 @@ svg{{width:100%;height:100%}}
 <script>
 const RAW  = {hierarchy_json};
 const EMP  = {emp_json};
+const FILTERS = {filters_json};
 
 // ── Stratify flat data ──────────────────────────────────────────────────
 const stratify = d3.stratify().id(d=>d.id).parentId(d=>d.parentId);
@@ -277,6 +397,41 @@ catch(e) {{
 }}
 // Start tree collapsed (depth>=1)
 root.each(d=>{{ if(d.depth>=1&&d.children){{ d._ch=d.children; d.children=null; }} }});
+
+// ── Enhanced Tooltip Function ────────────────────────────────────────────
+function showEnhancedTooltip(event, d) {{
+  const node = d.data;
+  const tooltip = document.getElementById('tooltip');
+
+  // Build detailed tooltip content
+  let tooltipHTML = `
+    <div style="padding:4px">
+      <div style="font-weight:700;margin-bottom:6px;border-bottom:1px solid #475569;padding-bottom:4px">
+        ${{node.full_name || node.name}}
+      </div>
+      <div style="font-size:9px;color:#94a3b8;line-height:1.5">
+        ${{node.cf ? '<div><b>CF:</b> ' + node.cf + '</div>' : ''}}
+        ${{node.qualifica && node.qualifica !== 'N/D' ? '<div><b>Qualifica:</b> ' + node.qualifica + '</div>' : ''}}
+        ${{node.area && node.area !== 'N/D' ? '<div><b>Area:</b> ' + node.area + '</div>' : ''}}
+        ${{node.sede && node.sede !== 'N/D' ? '<div><b>Sede:</b> ' + node.sede + '</div>' : ''}}
+        ${{node.societa && node.societa !== 'N/D' ? '<div><b>Società:</b> ' + node.societa + '</div>' : ''}}
+        <div><b>Dipendenti:</b> ${{node.employee_count || 0}}</div>
+        ${{node.email && node.email !== 'N/D' ? '<div><b>Email:</b> ' + node.email + '</div>' : ''}}
+        ${{node.contratto && node.contratto !== 'N/D' ? '<div><b>Contratto:</b> ' + node.contratto + '</div>' : ''}}
+      </div>
+    </div>
+  `;
+
+  tooltip.innerHTML = tooltipHTML;
+  tooltip.style.left = (event.clientX + 12) + 'px';
+  tooltip.style.top = (event.clientY - 8) + 'px';
+  tooltip.style.display = 'block';
+  tooltip.style.maxWidth = '280px';
+}}
+
+function hideTooltip() {{
+  document.getElementById('tooltip').style.display = 'none';
+}}
 
 // ── SVG & zoom ──────────────────────────────────────────────────────────
 const ROW_H=42, COL_W=210, NW=190, NH=36;
@@ -486,7 +641,9 @@ function drawHorizontal() {{
   const ne=nd.enter().append('g').attr('class','node-g')
     .attr('transform',d=>`translate(${{d.y}},${{d.x}})`)
     .on('click',  (ev,d)=>{{ev.stopPropagation();toggle(d);}})
-    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}});
+    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}})
+    .on('mouseover', (ev,d)=>showEnhancedTooltip(ev,d))
+    .on('mouseout', hideTooltip);
 
   ne.append('rect').attr('class','node-box').attr('width',NW).attr('height',NH).attr('rx',4);
   ne.append('text').attr('class','nd-name').attr('x',7).attr('y',14).text(d=>cut(d.data.name,24));
@@ -575,7 +732,9 @@ function drawVertical() {{
   const ne=nd.enter().append('g').attr('class','node-g')
     .attr('transform',d=>`translate(${{d.x-VNW/2}},${{d.y}})`)
     .on('click',  (ev,d)=>{{ev.stopPropagation();toggle(d);}})
-    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}});
+    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}})
+    .on('mouseover', (ev,d)=>showEnhancedTooltip(ev,d))
+    .on('mouseout', hideTooltip);
 
   ne.append('rect').attr('class','node-box').attr('width',VNW).attr('height',VNH).attr('rx',4);
   ne.append('text').attr('class','nd-name').attr('x',6).attr('y',14).text(d=>cut(d.data.name,19));
