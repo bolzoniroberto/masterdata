@@ -23,7 +23,7 @@ def render_orgchart_org_view():
     lookup_service   = get_lookup_service()
 
     # ========== FILTERS ==========
-    col1, col2, col3 = st.columns([3, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
     with col1:
         search_query = st.text_input(
             "🔍 Cerca struttura o dipendente",
@@ -31,10 +31,42 @@ def render_orgchart_org_view():
             key="org_search"
         )
     with col2:
+        show_people = st.toggle("👤 Mostra persone", value=True, key="org_show_people")
+
+    with col3:
+        show_orphans_only = st.checkbox(
+            "👤 Solo Orfani",
+            value=False,
+            key="org_orphans",
+            help="Mostra solo nodi senza unità padre (orfani)"
+        )
+
+    with col4:
         st.button("📥 Export PNG", use_container_width=True, disabled=True,
                   help="Disponibile nel layout Albero con tasto destro → Salva immagine")
-    with col3:
-        show_people = st.toggle("👤 Mostra persone", value=True, key="org_show_people")
+
+    with col5:
+        pass  # Reserved for future
+
+    # Advanced filters
+    with st.expander("🔧 Filtri Avanzati", expanded=False):
+        fcol1, fcol2 = st.columns(2)
+
+        with fcol1:
+            min_employees = st.number_input(
+                "Min. dipendenti",
+                min_value=0,
+                value=0,
+                key="org_min_emp",
+                help="Mostra solo unità con almeno N dipendenti"
+            )
+
+        with fcol2:
+            has_parent_filter = st.selectbox(
+                "Ha unità padre",
+                options=["Tutti", "Sì", "No"],
+                key="org_has_parent"
+            )
 
     # ========== LOAD DATA ==========
     with st.spinner("Caricamento organigramma…"):
@@ -49,9 +81,94 @@ def render_orgchart_org_view():
 
             # All nodes are org units (no person nodes in new architecture)
             nodes = all_nodes
-            struttura_count = len(nodes) - 1  # Exclude ROOT_ORG
+
+            # ========== ENRICH NODES WITH ORG UNIT DETAILS ==========
+            for node in nodes:
+                if node.get('id') == 'ROOT_ORG':
+                    node['full_name'] = 'ROOT_ORG'
+                    node['description'] = 'Radice organizzazione'
+                    node['has_parent'] = False
+                    continue
+
+                # Query org unit details from database
+                org_details = orgchart_service._query("""
+                    SELECT
+                        org_unit_name,
+                        description,
+                        parent_org_unit_id,
+                        responsible_cf,
+                        approver_cf
+                    FROM org_units
+                    WHERE org_unit_id = ?
+                """, (node['id'],))
+
+                if org_details:
+                    unit = org_details[0]
+                    node['full_name'] = unit.get('org_unit_name') or node.get('name', 'N/D')
+                    node['description'] = unit.get('description') or 'N/D'
+                    node['responsible_cf'] = unit.get('responsible_cf') or 'N/D'
+                    node['approver_cf'] = unit.get('approver_cf') or 'N/D'
+                    node['has_parent'] = bool(unit.get('parent_org_unit_id'))
+                else:
+                    node['full_name'] = node.get('name', 'N/D')
+                    node['description'] = 'N/D'
+                    node['responsible_cf'] = 'N/D'
+                    node['approver_cf'] = 'N/D'
+                    node['has_parent'] = node.get('parentId') != 'ROOT_ORG'
+
+            # ========== APPLY FILTERS ==========
+            filtered_nodes = nodes.copy()
+
+            # Filter 1: Orphans only
+            orphans = [n for n in nodes if n.get('parentId') == 'ROOT_ORG' and n['id'] != 'ROOT_ORG']
+            if show_orphans_only:
+                filtered_nodes = orphans
+
+            # Filter 2: Has parent
+            if has_parent_filter != "Tutti":
+                if has_parent_filter == "Sì":
+                    filtered_nodes = [n for n in filtered_nodes if n.get('has_parent', True)]
+                else:  # "No"
+                    filtered_nodes = [n for n in filtered_nodes if not n.get('has_parent', True)]
+
+            # Filter 3: Min employees
+            if min_employees > 0:
+                filtered_nodes = [n for n in filtered_nodes if n.get('employee_count', 0) >= min_employees]
+
+            # Update counts
+            struttura_count = len(filtered_nodes) - (1 if any(n['id'] == 'ROOT_ORG' for n in filtered_nodes) else 0)
             person_count = 0  # No person nodes in org units tree
-            hierarchy_json = json.dumps(nodes, ensure_ascii=False)
+            orphans_count = len(orphans)
+
+            # ========== ORPHANS ALERT ==========
+            if orphans_count > 0:
+                st.warning(f"⚠️ **{orphans_count} unità organizzative orfane** rilevate (senza unità padre)")
+
+                with st.expander(f"📋 Dettagli Orfani ({orphans_count})", expanded=False):
+                    if orphans_count > 20:
+                        st.info(f"Visualizzate prime 20 di {orphans_count} unità orfane")
+                        display_orphans = orphans[:20]
+                    else:
+                        display_orphans = orphans
+
+                    # Build orphans table
+                    orphans_data = []
+                    for orphan in display_orphans:
+                        orphans_data.append({
+                            "Nome": orphan.get('name', 'N/D'),
+                            "ID": orphan.get('id', 'N/D'),
+                            "Descrizione": orphan.get('description', 'N/D'),
+                            "Responsabile CF": orphan.get('responsible_cf', 'N/D'),
+                            "Dipendenti": orphan.get('employee_count', 0)
+                        })
+
+                    if orphans_data:
+                        import pandas as pd
+                        df_orphans = pd.DataFrame(orphans_data)
+                        st.dataframe(df_orphans, use_container_width=True, hide_index=True)
+
+            # Use filtered nodes for rendering
+            hierarchy_json = json.dumps(filtered_nodes, ensure_ascii=False)
 
             html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -285,6 +402,38 @@ function cut(s,m){{if(!s)return'';s=String(s);return s.length>m?s.slice(0,m-1)+'
 function cc(d){{return d._ch?d._ch.length:(d.children?d.children.length:0)||'';}}
 const isPerson=d=>d.data.node_type==='person';
 
+// Enhanced tooltip functions
+function showEnhancedTooltip(event, d) {{
+  const node = d.data;
+  const tooltip = document.getElementById('tooltip');
+
+  // Build detailed tooltip content for org units
+  let tooltipHTML = `
+    <div style="padding:4px">
+      <div style="font-weight:700;margin-bottom:6px;font-size:10px">
+        ${{node.full_name || node.name}}
+      </div>
+      <div style="font-size:9px;color:#94a3b8;line-height:1.5">
+        ${{node.id && node.id !== 'ROOT_ORG' ? '<div><b>ID:</b> ' + node.id + '</div>' : ''}}
+        ${{node.description && node.description !== 'N/D' ? '<div><b>Descrizione:</b> ' + node.description + '</div>' : ''}}
+        ${{node.responsible_cf && node.responsible_cf !== 'N/D' ? '<div><b>Responsabile CF:</b> ' + node.responsible_cf + '</div>' : ''}}
+        ${{node.approver_cf && node.approver_cf !== 'N/D' ? '<div><b>Approvatore CF:</b> ' + node.approver_cf + '</div>' : ''}}
+        ${{node.employee_count > 0 ? '<div><b>Dipendenti:</b> ' + node.employee_count + '</div>' : ''}}
+      </div>
+    </div>
+  `;
+
+  tooltip.innerHTML = tooltipHTML;
+  tooltip.style.left = (event.pageX + 10) + 'px';
+  tooltip.style.top = (event.pageY + 10) + 'px';
+  tooltip.style.display = 'block';
+}}
+
+function hideTooltip() {{
+  const tooltip = document.getElementById('tooltip');
+  tooltip.style.display = 'none';
+}}
+
 function nodeClass(d) {{
   if(d.data._hl) return 'node-box'+(isPerson(d)?' person':'')+' hl';
   if(isPerson(d)) return 'node-box person';
@@ -334,7 +483,9 @@ function drawTreeBase(nodeSize,getTransform,getLinkD,getTogglePos) {{
     .attr('class',d=>'node-g'+(isPerson(d)?' person':''))
     .attr('transform',getTransform)
     .on('click',(ev,d)=>{{ev.stopPropagation();isPerson(d)?showPersonPopup(d,ev):toggle(d);}})
-    .on('dblclick',(ev,d)=>{{ev.stopPropagation();if(!isPerson(d))openModal(d);}});
+    .on('dblclick',(ev,d)=>{{ev.stopPropagation();if(!isPerson(d))openModal(d);}})
+    .on('mouseover', (ev,d)=>showEnhancedTooltip(ev,d))
+    .on('mouseout', hideTooltip);
 
   ne.append('rect').attr('class',d=>'node-box'+(isPerson(d)?' person':'')).attr('width',NW).attr('height',NH).attr('rx',4);
   ne.append('text').attr('class',d=>'nd-name'+(isPerson(d)?' person-name':'')).attr('x',7).attr('y',isPerson?15:14)

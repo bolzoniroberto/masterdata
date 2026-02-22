@@ -26,7 +26,7 @@ def render_orgchart_tns_structures_view():
     lookup_service = get_lookup_service()
 
     # ========== FILTERS & SEARCH ==========
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
 
     with col1:
         search_query = st.text_input(
@@ -48,8 +48,36 @@ def render_orgchart_tns_structures_view():
         )
 
     with col4:
+        show_orphans_only = st.checkbox(
+            "👤 Solo Orfani",
+            value=False,
+            key="tns_orphans",
+            help="Mostra solo strutture senza padre TNS (orfani)"
+        )
+
+    with col5:
         st.button("📥 Export PNG", use_container_width=True, disabled=True,
                   help="Disponibile nel layout Albero con tasto destro → Salva immagine")
+
+    # Advanced filters
+    with st.expander("🔧 Filtri Avanzati", expanded=False):
+        fcol1, fcol2 = st.columns(2)
+
+        with fcol1:
+            min_employees = st.number_input(
+                "Min. dipendenti",
+                min_value=0,
+                value=0,
+                key="tns_min_emp",
+                help="Mostra solo strutture con almeno N dipendenti"
+            )
+
+        with fcol2:
+            has_approver_filter = st.selectbox(
+                "Ha approvatore",
+                options=["Tutti", "Sì", "No"],
+                key="tns_has_approver"
+            )
 
     # ========== LOAD DATA ==========
     with st.spinner("Caricamento organigramma TNS…"):
@@ -65,8 +93,97 @@ def render_orgchart_tns_structures_view():
                 st.info("Verifica che siano state importate strutture nel database.")
                 return
 
-            # Count structures without approver for stats
-            no_appr_count = sum(1 for n in nodes if not n.get('has_approver', False))
+            # ========== ENRICH NODES WITH TNS STRUCTURE DETAILS ==========
+            all_nodes = nodes.copy()
+            for node in all_nodes:
+                if node.get('id') == 'ROOT':
+                    node['full_name'] = 'ROOT'
+                    node['tns_code'] = 'ROOT'
+                    node['area'] = 'N/D'
+                    node['societa'] = 'N/D'
+                    node['has_padre'] = False
+                    continue
+
+                # Query employee details from TNS structure (cod_tns)
+                tns_details = orgchart_service._query("""
+                    SELECT DISTINCT
+                        cod_tns,
+                        padre_tns,
+                        area,
+                        societa,
+                        titolare
+                    FROM employees
+                    WHERE cod_tns = ?
+                    LIMIT 1
+                """, (node['id'],))
+
+                if tns_details:
+                    emp = tns_details[0]
+                    node['full_name'] = node.get('name', 'N/D')
+                    node['tns_code'] = emp.get('cod_tns') or 'N/D'
+                    node['area'] = emp.get('area') or 'N/D'
+                    node['societa'] = emp.get('societa') or 'N/D'
+                    node['has_padre'] = bool(emp.get('padre_tns') and emp.get('padre_tns') != 'ROOT')
+                else:
+                    node['full_name'] = node.get('name', 'N/D')
+                    node['tns_code'] = node.get('id', 'N/D')
+                    node['area'] = 'N/D'
+                    node['societa'] = 'N/D'
+                    node['has_padre'] = node.get('parentId') != 'ROOT'
+
+            # ========== APPLY FILTERS ==========
+            filtered_nodes = all_nodes.copy()
+
+            # Filter 1: Orphans only (structures without padre_tns or padre_tns = ROOT)
+            orphans = [n for n in all_nodes if n.get('parentId') == 'ROOT' and n['id'] != 'ROOT']
+            if show_orphans_only:
+                filtered_nodes = orphans
+
+            # Filter 2: Has approver
+            if has_approver_filter != "Tutti":
+                if has_approver_filter == "Sì":
+                    filtered_nodes = [n for n in filtered_nodes if n.get('has_approver', False)]
+                else:  # "No"
+                    filtered_nodes = [n for n in filtered_nodes if not n.get('has_approver', False)]
+
+            # Filter 3: Min employees
+            if min_employees > 0:
+                filtered_nodes = [n for n in filtered_nodes if n.get('employee_count', 0) >= min_employees]
+
+            # Update counts
+            no_appr_count = sum(1 for n in filtered_nodes if not n.get('has_approver', False))
+            orphans_count = len(orphans)
+
+            # ========== ORPHANS ALERT ==========
+            if orphans_count > 0:
+                st.warning(f"⚠️ **{orphans_count} strutture TNS orfane** rilevate (senza padre TNS)")
+
+                with st.expander(f"📋 Dettagli Orfani ({orphans_count})", expanded=False):
+                    if orphans_count > 20:
+                        st.info(f"Visualizzate prime 20 di {orphans_count} strutture orfane")
+                        display_orphans = orphans[:20]
+                    else:
+                        display_orphans = orphans
+
+                    # Build orphans table
+                    orphans_data = []
+                    for orphan in display_orphans:
+                        orphans_data.append({
+                            "Nome": orphan.get('name', 'N/D'),
+                            "Codice TNS": orphan.get('tns_code', 'N/D'),
+                            "Area": orphan.get('area', 'N/D'),
+                            "Società": orphan.get('societa', 'N/D'),
+                            "Dipendenti": orphan.get('employee_count', 0),
+                            "Ha Approvatore": "✅" if orphan.get('has_approver', False) else "❌"
+                        })
+
+                    if orphans_data:
+                        import pandas as pd
+                        df_orphans = pd.DataFrame(orphans_data)
+                        st.dataframe(df_orphans, use_container_width=True, hide_index=True)
+
+            # Use filtered nodes for rendering
+            nodes = filtered_nodes
             hierarchy_json = json.dumps(nodes, ensure_ascii=False)
 
             # Employees grouped by TNS code (for modal detail popup)
@@ -317,6 +434,38 @@ function setLayout(type) {{
 function cc(d) {{ return d._ch?d._ch.length:(d.children?d.children.length:0)||''; }}
 function cut(s,m) {{ if(!s)return''; s=String(s); return s.length>m?s.slice(0,m-1)+'…':s; }}
 
+// Enhanced tooltip functions
+function showEnhancedTooltip(event, d) {{
+  const node = d.data;
+  const tooltip = document.getElementById('tooltip');
+
+  // Build detailed tooltip content for TNS structures
+  let tooltipHTML = `
+    <div style="padding:4px">
+      <div style="font-weight:700;margin-bottom:6px;font-size:10px">
+        ${{node.full_name || node.name}}
+      </div>
+      <div style="font-size:9px;color:#94a3b8;line-height:1.5">
+        ${{node.tns_code && node.tns_code !== 'N/D' ? '<div><b>Codice TNS:</b> ' + node.tns_code + '</div>' : ''}}
+        ${{node.area && node.area !== 'N/D' ? '<div><b>Area:</b> ' + node.area + '</div>' : ''}}
+        ${{node.societa && node.societa !== 'N/D' ? '<div><b>Società:</b> ' + node.societa + '</div>' : ''}}
+        ${{node.employee_count > 0 ? '<div><b>Dipendenti:</b> ' + node.employee_count + '</div>' : ''}}
+        ${{node.has_approver ? '<div><b>Approvatori:</b> ' + (node.approvers ? node.approvers.length : 0) + '</div>' : '<div style="color:#f59e0b"><b>⚠️ Nessun approvatore</b></div>'}}
+      </div>
+    </div>
+  `;
+
+  tooltip.innerHTML = tooltipHTML;
+  tooltip.style.left = (event.pageX + 10) + 'px';
+  tooltip.style.top = (event.pageY + 10) + 'px';
+  tooltip.style.display = 'block';
+}}
+
+function hideTooltip() {{
+  const tooltip = document.getElementById('tooltip');
+  tooltip.style.display = 'none';
+}}
+
 // Global variable to track selected/focused node
 let focusedNode = null;
 
@@ -439,7 +588,9 @@ function drawHorizontal() {{
   const ne=nd.enter().append('g').attr('class','node-g')
     .attr('transform',d=>`translate(${{d.y}},${{d.x}})`)
     .on('click',  (ev,d)=>{{ev.stopPropagation();toggle(d);}})
-    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}});
+    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}})
+    .on('mouseover', (ev,d)=>showEnhancedTooltip(ev,d))
+    .on('mouseout', hideTooltip);
 
   ne.append('rect').attr('class','node-box').attr('width',NW).attr('height',NH).attr('rx',4);
   ne.append('text').attr('class','nd-name').attr('x',7).attr('y',14).text(d=>cut(d.data.name,26));
@@ -523,7 +674,9 @@ function drawVertical() {{
   const ne=nd.enter().append('g').attr('class','node-g')
     .attr('transform',d=>`translate(${{d.x-VNW/2}},${{d.y}})`)
     .on('click',  (ev,d)=>{{ev.stopPropagation();toggle(d);}})
-    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}});
+    .on('dblclick',(ev,d)=>{{ev.stopPropagation();openModal(d);}})
+    .on('mouseover', (ev,d)=>showEnhancedTooltip(ev,d))
+    .on('mouseout', hideTooltip);
 
   ne.append('rect').attr('class','node-box').attr('width',VNW).attr('height',VNH).attr('rx',4);
   ne.append('text').attr('class','nd-name').attr('x',6).attr('y',14).text(d=>cut(d.data.name,21));
