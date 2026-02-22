@@ -5,11 +5,8 @@ import streamlit as st
 from pathlib import Path
 import config
 
-
 def show_save_export_view():
     """UI per salvare ed esportare dati"""
-
-    st.header("💾 Salvataggio & Export")
 
     personale_df = st.session_state.personale_df
     strutture_df = st.session_state.strutture_df
@@ -146,7 +143,6 @@ def show_save_export_view():
             st.dataframe(backup_table, use_container_width=True, height=300)
             
             # Selezione backup da ripristinare
-            st.markdown("---")
             st.markdown("#### Ripristina backup")
             
             selected_backup = st.selectbox(

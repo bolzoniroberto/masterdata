@@ -5,9 +5,8 @@ Layout: 3 tab principali per gestire i 16 campi ruoli di approvazione.
 import streamlit as st
 import pandas as pd
 import numpy as np
-from ui.styles import apply_common_styles, render_filter_badge
+from ui.styles import render_filter_badge
 import config
-
 
 # Costanti
 ROLE_FIELDS = [
@@ -57,21 +56,20 @@ ROLE_SECTIONS = {
     ]
 }
 
-
 def show_ruoli_view():
     """Entry point principale per gestione ruoli"""
 
-    apply_common_styles()
-
-    st.header("🎭 Gestione Ruoli Approvazione")
     st.caption("Gestisci i 16 campi ruoli di approvazione per trasferte e note spese")
 
-    personale_df = st.session_state.personale_df
+    # Get personale dataframe with safety check
+    personale_df = st.session_state.get('personale_df')
+
+    if personale_df is None:
+        st.warning("⚠️ Nessun dato disponibile. Importa un file Excel per iniziare.")
+        return
 
     # === METRICHE RAPIDE ===
     show_role_metrics(personale_df)
-
-    st.markdown("---")
 
     # === TAB PRINCIPALE ===
     tab1, tab2, tab3 = st.tabs(["✏️ Tabella Editabile", "🔢 Matrice Ruoli", "📊 Report Aggregato"])
@@ -84,7 +82,6 @@ def show_ruoli_view():
 
     with tab3:
         show_aggregate_report_view(personale_df)
-
 
 def show_role_metrics(personale_df: pd.DataFrame):
     """Mostra metriche dashboard per ruoli"""
@@ -114,7 +111,6 @@ def show_role_metrics(personale_df: pd.DataFrame):
     with col5:
         uos = personale_df['Unità Organizzativa'].nunique()
         st.metric("🏗️ UO", uos)
-
 
 def show_editable_table_view(personale_df: pd.DataFrame):
     """Tab 1: Tabella editabile con master-detail"""
@@ -186,7 +182,6 @@ def show_editable_table_view(personale_df: pd.DataFrame):
         else:
             st.info("👈 Seleziona un dipendente dalla tabella")
 
-
 def show_role_detail_panel(personale_df: pd.DataFrame, filtered_df: pd.DataFrame):
     """Mostra panel dettagli ruoli editabile"""
 
@@ -231,8 +226,6 @@ def show_role_detail_panel(personale_df: pd.DataFrame, filtered_df: pd.DataFrame
                         except Exception as e:
                             st.warning(f"⚠️ Errore persistenza database: {str(e)}")
 
-    st.markdown("---")
-
     # === BOTTONI AZIONE ===
     col1, col2 = st.columns(2)
 
@@ -247,7 +240,6 @@ def show_role_detail_panel(personale_df: pd.DataFrame, filtered_df: pd.DataFrame
         if st.button("🔄 Deseleziona", use_container_width=True):
             st.session_state.selected_role_employee = None
             st.rerun()
-
 
 def show_role_matrix_view(personale_df: pd.DataFrame):
     """Tab 2: Matrice ruoli (righe=ruoli, colonne=dipendenti)"""
@@ -296,7 +288,6 @@ def show_role_matrix_view(personale_df: pd.DataFrame):
     else:
         st.info("Nessun dato disponibile con i filtri applicati")
 
-
 def show_aggregate_report_view(personale_df: pd.DataFrame):
     """Tab 3: Report aggregato con statistiche per ruolo"""
 
@@ -341,7 +332,6 @@ def show_aggregate_report_view(personale_df: pd.DataFrame):
     else:
         st.info("Nessun ruolo con i filtri applicati")
 
-
 # === FUNZIONI HELPER ===
 
 def apply_filters_editable(df: pd.DataFrame, search_text: str, filter_uo: list, filter_role: str) -> pd.DataFrame:
@@ -367,7 +357,6 @@ def apply_filters_editable(df: pd.DataFrame, search_text: str, filter_uo: list, 
 
     return filtered_df
 
-
 def parse_role_values(role_str: str) -> list:
     """Parsa valori ruolo separati da ,|; in lista"""
 
@@ -383,11 +372,9 @@ def parse_role_values(role_str: str) -> list:
     values = [v.strip() for v in role_str.split(',') if v.strip()]
     return values
 
-
 def has_role(role_str: str) -> bool:
     """Controlla se il ruolo è valorizzato"""
     return role_str is not None and str(role_str).strip() != "" and not pd.isna(role_str)
-
 
 def build_role_matrix(personale_df: pd.DataFrame) -> pd.DataFrame:
     """Costruisce matrice ruoli (righe=ruoli, colonne=dipendenti)"""
@@ -424,7 +411,6 @@ def build_role_matrix(personale_df: pd.DataFrame) -> pd.DataFrame:
     matrix_df = matrix_df[[col for col in ROLE_FIELDS if col in matrix_df.columns]]
 
     return matrix_df
-
 
 def build_aggregate_report(personale_df: pd.DataFrame, min_count: int = 0, sort_by: str = "Count (alto → basso)") -> pd.DataFrame:
     """Costruisce report aggregato con statistiche per ruolo"""

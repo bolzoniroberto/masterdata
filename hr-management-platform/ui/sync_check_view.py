@@ -11,11 +11,8 @@ from models.sync_models import PersonMismatch, SyncCheckResult
 from services.sync_checker import SyncChecker
 import config
 
-
 def show_sync_check_view():
     """Vista principale per la verifica di consistenza DB-Excel."""
-
-    st.title("🔍 Verifica Consistenza DB-Excel")
 
     st.markdown("""
     Questa funzionalità verifica la consistenza tra i dati presenti nel **database SQLite**
@@ -29,7 +26,6 @@ def show_sync_check_view():
     """)
 
     # 1️⃣ Selezione file Excel
-    st.subheader("1️⃣ Seleziona File Excel")
 
     excel_files = _get_available_excel_files()
 
@@ -53,7 +49,6 @@ def show_sync_check_view():
         )
 
     # 2️⃣ Esegui verifica
-    st.subheader("2️⃣ Esegui Verifica")
 
     if st.button("🚀 Avvia Verifica", type="primary", use_container_width=True):
         with st.spinner("🔍 Verifica in corso..."):
@@ -90,9 +85,7 @@ def show_sync_check_view():
 
     # Mostra risultati se presenti
     if 'sync_check_result' in st.session_state:
-        st.markdown("---")
         _show_results(st.session_state.sync_check_result)
-
 
 def _get_available_excel_files() -> List[str]:
     """
@@ -110,7 +103,6 @@ def _get_available_excel_files() -> List[str]:
 
     return sorted(excel_files)
 
-
 def _show_results(result: SyncCheckResult):
     """
     Mostra i risultati della verifica di consistenza.
@@ -118,7 +110,6 @@ def _show_results(result: SyncCheckResult):
     Args:
         result: Oggetto SyncCheckResult con i dati della verifica
     """
-    st.subheader("📊 Risultati Verifica")
 
     # Timestamp e file
     st.caption(f"📅 Verifica eseguita: {result.timestamp.strftime('%d/%m/%Y %H:%M:%S')}")
@@ -165,10 +156,7 @@ def _show_results(result: SyncCheckResult):
     else:
         st.warning(f"⚠️ **Rilevati {result.total_issues} problemi di consistenza.**")
 
-    st.markdown("---")
-
     # Dettaglio categorie - 3 metriche
-    st.subheader("📋 Dettaglio per Categoria")
 
     col1, col2, col3 = st.columns(3)
 
@@ -193,11 +181,8 @@ def _show_results(result: SyncCheckResult):
             help="Responsabili inesistenti o senza flag Approvatore"
         )
 
-    st.markdown("---")
-
     # Dettagli problemi - 4 tabs
     if result.has_issues:
-        st.subheader("🔍 Dettagli Problemi")
 
         tab1, tab2, tab3, tab4 = st.tabs([
             f"🔴 Mancanti DB ({result.missing_in_db_count})",
@@ -251,7 +236,6 @@ def _show_results(result: SyncCheckResult):
                 st.info("✅ Tutti i responsabili hanno il flag Approvatore corretto.")
     else:
         st.success("✅ Nessun problema da visualizzare.")
-
 
 def _show_mismatch_table(
     mismatches: List[PersonMismatch],

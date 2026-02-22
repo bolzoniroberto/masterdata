@@ -22,8 +22,42 @@ st.set_page_config(
     page_title=config.PAGE_TITLE,
     page_icon=config.PAGE_ICON,
     layout=config.LAYOUT,
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"  # Collapsed by default when using ribbon
 )
+
+# ── Design system – iniettato UNA SOLA VOLTA all'avvio ──────────────────────
+from ui.styles import apply_common_styles
+apply_common_styles()
+
+# ── Ribbon Interface ────────────────────────────────────────────────────────
+# from ui.ribbon import render_ribbon  # OLD: Custom HTML/JS ribbon (SecurityError issues)
+# from ui.ribbon_simple import render_simple_ribbon  # SIMPLE: Bottoni base
+from ui.ribbon_sticky import render_sticky_ribbon  # STICKY: Con sottomenu completi
+# from ui.ribbon_listener import render_listener  # DISABLED
+# from ui.mobile_menu import render_mobile_menu  # Not needed
+
+# ── Handle ribbon navigation via query parameters ──────────────────────────
+# Ribbon communicates via URL query params since it runs in an iframe
+query_params = st.query_params
+
+# Update current_page from query param (if present)
+if 'current_page' in query_params:
+    new_page = query_params['current_page']
+    if 'current_page' not in st.session_state or st.session_state.current_page != new_page:
+        st.session_state.current_page = new_page
+
+# Update active_ribbon_tab from query param (if present)
+if 'active_ribbon_tab' in query_params:
+    new_tab = query_params['active_ribbon_tab']
+    if 'active_ribbon_tab' not in st.session_state or st.session_state.active_ribbon_tab != new_tab:
+        st.session_state.active_ribbon_tab = new_tab
+
+# Update dialog flags from query params
+if 'show_manual_snapshot_dialog' in query_params:
+    st.session_state.show_manual_snapshot_dialog = query_params['show_manual_snapshot_dialog'] == 'true'
+
+if 'show_clear_db_confirm' in query_params:
+    st.session_state.show_clear_db_confirm = query_params['show_clear_db_confirm'] == 'true'
 
 # Inizializza session state per UI
 if 'sidebar_collapsed' not in st.session_state:
@@ -31,7 +65,9 @@ if 'sidebar_collapsed' not in st.session_state:
 if 'compare_versions' not in st.session_state:
     st.session_state.compare_versions = False
 if 'current_page' not in st.session_state:
-    st.session_state.current_page = "📊 Dashboard Home"
+    st.session_state.current_page = "Dashboard Home"
+
+# ✅ NOTA: Listener per ribbon ora è DOPO render_ribbon() nel main()
 
 # Inizializzazione session state
 if 'data_loaded' not in st.session_state:
@@ -56,19 +92,25 @@ if st.session_state.database_handler:
         from migrations.migration_001_add_import_versioning import migrate
         migrate(config.DB_PATH)
     except Exception as e:
-        print(f"⚠️ Warning: Migration 001 failed: {str(e)}")
+        print(f"! Warning: Migration 001 failed: {str(e)}")
 
     try:
         from migrations.migration_002_add_checkpoint_milestone import migrate as migrate_002
         migrate_002(config.DB_PATH)
     except Exception as e:
-        print(f"⚠️ Warning: Migration 002 failed: {str(e)}")
+        print(f"! Warning: Migration 002 failed: {str(e)}")
+
+    try:
+        from migrations.migration_003_add_hierarchy_fields import migrate as migrate_003
+        migrate_003(config.DB_PATH)
+    except Exception as e:
+        print(f"! Warning: Migration 003 failed: {str(e)}")
 
 
 def load_excel_to_staging(uploaded_file):
     """
     Step 1: Carica file Excel in staging area (NON ancora nel database).
-    L'utente potrà esplorare tutti i dati prima di decidere se importarli.
+    Supporta sia formato TNS (vecchio) che DB_ORG (nuovo con mappatura colonne).
 
     Args:
         uploaded_file: File Excel uploadato
@@ -85,7 +127,45 @@ def load_excel_to_staging(uploaded_file):
             tmp.write(uploaded_file.getvalue())
             tmp_path = Path(tmp.name)
 
-        # Carica dati da Excel
+        # === RILEVA FORMATO FILE ===
+        xls = pd.ExcelFile(tmp_path)
+        available_sheets = xls.sheet_names
+
+        # Controlla se è formato DB_ORG (nuovo)
+        if 'DB_ORG' in available_sheets:
+            # Formato DB_ORG rilevato - salva file per import
+            st.session_state.uploaded_db_org_file = uploaded_file
+            st.session_state.db_org_file_ready = True
+
+            # Non fare return - mostra invece un pulsante diretto
+            return True, "DB_ORG_DETECTED"
+
+        # Controlla se è formato TNS (vecchio)
+        has_tns_personale = 'TNS Personale' in available_sheets or any('personale' in s.lower() for s in available_sheets)
+        has_tns_strutture = 'TNS Strutture' in available_sheets or any('strutture' in s.lower() for s in available_sheets)
+
+        if not has_tns_personale or not has_tns_strutture:
+            # Formato non riconosciuto
+            return False, f"""✗ **Formato file non riconosciuto**
+
+**Fogli trovati nel file:**
+{', '.join(available_sheets)}
+
+**Formati supportati:**
+
+1. **DB_ORG** (consigliato):
+   - Foglio: "DB_ORG"
+   - Sistema di mappatura colonne intelligente
+   - Importa posizioni organizzative (vacanti e occupate)
+
+2. **TNS** (legacy):
+   - Fogli: "TNS Personale" e "TNS Strutture"
+   - Sistema di import tradizionale
+
+💡 **Suggerimento**: Usa il formato DB_ORG per l'import con mappatura colonne.
+"""
+
+        # Formato TNS rilevato - procedi con caricamento tradizionale
         handler = ExcelHandler(tmp_path)
         personale, strutture, db_tns = handler.load_data()
 
@@ -103,7 +183,7 @@ def load_excel_to_staging(uploaded_file):
                 for e in first_errors
             ])
             more_msg = f"\n... e altri {len(personale_result.errors) - 10} errori" if len(personale_result.errors) > 10 else ""
-            return False, f"""❌ **Errori validazione Personale**
+            return False, f"""✗ **Errori validazione Personale**
 
 {error_summary}
 
@@ -127,7 +207,7 @@ def load_excel_to_staging(uploaded_file):
                 for e in first_errors
             ])
             more_msg = f"\n... e altri {len(strutture_result.errors) - 10} errori" if len(strutture_result.errors) > 10 else ""
-            return False, f"""❌ **Errori validazione Strutture**
+            return False, f"""✗ **Errori validazione Strutture**
 
 {error_summary}
 
@@ -148,9 +228,9 @@ def load_excel_to_staging(uploaded_file):
             'file_size_mb': len(uploaded_file.getvalue()) / (1024 * 1024),
         }
 
-        return True, f"""✅ **File caricato con successo in memoria!**
+        return True, f"""✓ **File caricato con successo in memoria!**
 
-📊 Contenuto:
+• Contenuto:
 - {len(personale)} dipendenti (Personale)
 - {len(strutture)} strutture organizzative
 
@@ -161,7 +241,7 @@ def load_excel_to_staging(uploaded_file):
 """
 
     except Exception as e:
-        return False, f"❌ Errore caricamento: {str(e)}"
+        return False, f"✗ Errore caricamento: {str(e)}"
 
 
 def preview_import_from_upload(uploaded_file, show_preview: bool = True):
@@ -221,14 +301,14 @@ def preview_import_from_upload(uploaded_file, show_preview: bool = True):
                 )
                 snapshot_msg = f"\n📦 Snapshot creato per recovery: {Path(snapshot_path).name}"
             except Exception as e:
-                print(f"⚠️ Errore creazione snapshot: {str(e)}")
+                print(f"! Errore creazione snapshot: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                snapshot_msg = f"\n⚠️ Warning: Snapshot non creato - {str(e)}"
+                snapshot_msg = f"\n! Warning: Snapshot non creato - {str(e)}"
 
             # Reload to session state
             success, msg = load_data_from_db()
-            return success, f"✅ {msg}{snapshot_msg}", None
+            return success, f"✓ {msg}{snapshot_msg}", None
 
         # SE preview abilitata: genera preview semplice con stats file
         else:
@@ -268,7 +348,7 @@ def confirm_import_from_staging(user_note: str = ""):
         from services.version_manager import VersionManager
 
         if 'excel_staging' not in st.session_state:
-            return False, "❌ Nessun dato in staging. Carica prima un file Excel."
+            return False, "✗ Nessun dato in staging. Carica prima un file Excel."
 
         staging = st.session_state.excel_staging
         db_handler = st.session_state.database_handler
@@ -302,8 +382,8 @@ def confirm_import_from_staging(user_note: str = ""):
             )
             snapshot_msg = f"📦 Snapshot #{version_id}: {Path(snapshot_path).name}"
         except Exception as e:
-            print(f"⚠️ Errore creazione snapshot: {str(e)}")
-            snapshot_msg = f"⚠️ Snapshot non creato: {str(e)}"
+            print(f"! Errore creazione snapshot: {str(e)}")
+            snapshot_msg = f"! Snapshot non creato: {str(e)}"
 
         # Reload to session state
         success, msg = load_data_from_db()
@@ -311,20 +391,20 @@ def confirm_import_from_staging(user_note: str = ""):
         # Cleanup staging
         del st.session_state.excel_staging
 
-        return success, f"""✅ **Dati importati nel database con successo!**
+        return success, f"""✓ **Dati importati nel database con successo!**
 
-📊 Importati:
+• Importati:
 - {p_count} dipendenti (Personale)
 - {s_count} strutture organizzative
 
 📦 Snapshot creato automaticamente
 {snapshot_msg}
 
-🎉 Database pronto! Usa "📸 Crea Snapshot" per salvare modifiche importanti.
+• Database pronto! Usa "Crea Snapshot" per salvare modifiche importanti.
 """
 
     except Exception as e:
-        return False, f"❌ Errore import: {str(e)}"
+        return False, f"✗ Errore import: {str(e)}"
 
 
 def confirm_import_with_version(preview_data: dict, user_note: str = ""):
@@ -373,12 +453,12 @@ def confirm_import_with_version(preview_data: dict, user_note: str = ""):
                 user_note=user_note
             )
             snapshot_msg = f"\n📦 Snapshot creato per recovery: {Path(snapshot_path).name}"
-            print(f"✅ Snapshot creato: {snapshot_path}")
+            print(f"✓ Snapshot creato: {snapshot_path}")
         except Exception as e:
-            print(f"⚠️ Errore creazione snapshot: {str(e)}")
+            print(f"! Errore creazione snapshot: {str(e)}")
             import traceback
             traceback.print_exc()
-            snapshot_msg = f"\n⚠️ Warning: Snapshot non creato - {str(e)}"
+            snapshot_msg = f"\n! Warning: Snapshot non creato - {str(e)}"
 
         # Reload to session state
         success, msg = load_data_from_db()
@@ -387,16 +467,16 @@ def confirm_import_with_version(preview_data: dict, user_note: str = ""):
         if 'import_preview' in st.session_state:
             del st.session_state.import_preview
 
-        return success, f"""✅ **Dati caricati con successo nel database!**
+        return success, f"""✓ **Dati caricati con successo nel database!**
 
-📊 Importati:
+• Importati:
 - {p_count} dipendenti (Personale)
 - {s_count} strutture organizzative
 
 📦 Snapshot creato automaticamente per recovery
 {snapshot_msg}
 
-🎉 Puoi ora lavorare con i dati. Usa "📸 Crea Snapshot" per salvare modifiche importanti.
+• Puoi ora lavorare con i dati. Usa "Crea Snapshot" per salvare modifiche importanti.
 """
 
     except Exception as e:
@@ -405,173 +485,30 @@ def confirm_import_with_version(preview_data: dict, user_note: str = ""):
 
 def show_top_toolbar():
     """
-    Mostra toolbar superiore con bottoni Checkpoint e Milestone.
-    Sempre visibile, ma bottoni disabilitati se dati non caricati.
+    Mostra topbar fissa con stats e pagina corrente.
+    CSS gestito centralmente da ui/styles.py → apply_common_styles().
     """
-    # CSS per header fisso e miglioramenti UI
-    st.markdown("""
-    <style>
-    /* Header fisso in alto */
-    .main-header {
-        position: sticky;
-        top: 0;
-        z-index: 999;
-        background: linear-gradient(180deg, var(--background-color) 0%, var(--background-color) 90%, transparent 100%);
-        padding: 1rem 0 1.5rem 0;
-        border-bottom: 2px solid var(--primary-color);
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    /* Toolbar sempre visibile */
-    .toolbar-container {
-        background: linear-gradient(135deg, var(--secondary-background-color) 0%, var(--secondary-background-color) 100%);
-        padding: 0.75rem 1rem;
-        border-radius: 0.5rem;
-        margin-bottom: 0.5rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid rgba(128,128,128,0.2);
-    }
-
-    /* Breadcrumb style */
-    .breadcrumb {
-        font-size: 0.9rem;
-        color: var(--text-color);
-        opacity: 0.8;
-        margin-bottom: 0.5rem;
-        padding: 0.5rem 0;
-        font-weight: 500;
-    }
-
-    .breadcrumb b {
-        color: var(--primary-color);
-    }
-
-    /* Migliora spacing generale */
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-
-    /* Stile bottoni migliorato */
-    .stButton button {
-        transition: all 0.2s ease;
-    }
-
-    .stButton button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    }
-
-    /* Sidebar migliorata */
-    section[data-testid="stSidebar"] {
-        background-color: var(--secondary-background-color);
-        border-right: 2px solid var(--primary-color);
-    }
-
-    /* Menu sections headers */
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3 {
-        font-size: 0.9rem;
-        margin-top: 1.5rem;
-        margin-bottom: 0.5rem;
-        opacity: 0.8;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    /* Menu buttons spacing */
-    section[data-testid="stSidebar"] .stButton {
-        margin-bottom: 0.25rem;
-    }
-
-    /* Section headers in sidebar */
-    section[data-testid="stSidebar"] p strong {
-        display: block;
-        font-size: 0.75rem;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-        color: var(--text-color);
-        opacity: 0.6;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    /* Expander in sidebar (Operazioni Avanzate) */
-    section[data-testid="stSidebar"] .streamlit-expanderHeader {
-        font-size: 0.85rem;
-        font-weight: 500;
-        background-color: rgba(128, 128, 128, 0.1);
-        border-radius: 0.3rem;
-        padding: 0.4rem 0.6rem;
-    }
-
-    section[data-testid="stSidebar"] .streamlit-expanderContent {
-        padding: 0.5rem 0;
-        border-left: 2px solid rgba(128, 128, 128, 0.2);
-        margin-left: 0.5rem;
-        padding-left: 0.5rem;
-    }
-
-    /* Caption styling in sidebar */
-    section[data-testid="stSidebar"] .caption {
-        font-size: 0.7rem;
-        opacity: 0.5;
-        margin-bottom: 0.5rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    from ui.styles import render_topbar
 
     data_loaded = st.session_state.data_loaded
+    current_page = st.session_state.get('current_page', 'Dashboard Home')
 
-    # Container toolbar con sfondo
-    st.markdown('<div class="toolbar-container">', unsafe_allow_html=True)
+    if data_loaded:
+        p_count = len(st.session_state.personale_df) if st.session_state.personale_df is not None else 0
+        s_count = len(st.session_state.strutture_df) if st.session_state.strutture_df is not None else 0
+        stats = f"{p_count} dip · {s_count} stru"
+    else:
+        stats = "Nessun dato"
 
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 2])
-
-    with col1:
-        if data_loaded:
-            p_count = len(st.session_state.personale_df) if st.session_state.personale_df is not None else 0
-            s_count = len(st.session_state.strutture_df) if st.session_state.strutture_df is not None else 0
-            st.markdown(f"**📊 Dati:** {p_count} personale · {s_count} strutture")
-        else:
-            st.markdown("**📊 Azioni Rapide**")
-
-    with col2:
-        if st.button("💾 Checkpoint", use_container_width=True,
-                     disabled=not data_loaded,
-                     help="Salvataggio veloce stato attuale" if data_loaded else "Carica dati prima"):
-            st.session_state.show_checkpoint_dialog = True
-            st.rerun()
-
-    with col3:
-        if st.button("🏁 Milestone", use_container_width=True,
-                     disabled=not data_loaded,
-                     help="Milestone certificata con nota" if data_loaded else "Carica dati prima"):
-            st.session_state.show_milestone_dialog = True
-            st.rerun()
-
-    with col4:
-        if st.button("🔍 Ricerca", use_container_width=True,
-                     disabled=not data_loaded,
-                     help="Ricerca intelligente" if data_loaded else "Carica dati prima"):
-            st.session_state.current_page = "🔍 Ricerca Intelligente"
-            st.rerun()
-
-    with col5:
-        # Info utente/sessione
-        if data_loaded:
-            st.markdown("**✅ Database attivo**")
-        else:
-            st.markdown("**⚠️ Carica dati**")
-
-    st.markdown('</div>', unsafe_allow_html=True)
+    render_topbar(page_name=current_page, stats=stats)
 
 
 def load_data_from_db():
     """
     Carica dati dal database SQLite in session state.
+
+    Supporta sia schema vecchio (personale/strutture) che nuovo (employees/org_units).
+    Converte automaticamente dal nuovo schema al formato dataframe per compatibilità UI.
 
     Viene usato:
     - Dopo upload Excel (che importa nel DB)
@@ -579,7 +516,124 @@ def load_data_from_db():
     """
     try:
         db_handler = st.session_state.database_handler
-        personale, strutture = db_handler.export_to_dataframe()
+        conn = db_handler.get_connection()
+        cursor = conn.cursor()
+
+        # === PROVA PRIMA NUOVO SCHEMA (employees/org_units) ===
+        cursor.execute("SELECT COUNT(*) FROM employees")
+        employees_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM org_units")
+        org_units_count = cursor.fetchone()[0]
+
+        if employees_count > 0 or org_units_count > 0:
+            print(f"[AUTO-LOAD] Trovati dati in nuovo schema: {employees_count} employees, {org_units_count} org_units")
+
+            # Query employees directly from database
+            # Note: Some fields like CDCCOSTO are in org_units, not employees
+            cursor.execute("""
+                SELECT
+                    tx_cod_fiscale,
+                    titolare,
+                    codice,
+                    cognome,
+                    nome,
+                    qualifica,
+                    area,
+                    sede,
+                    livello,
+                    contratto,
+                    ral,
+                    data_assunzione,
+                    data_cessazione,
+                    societa,
+                    sottoarea,
+                    sesso,
+                    email,
+                    reports_to_cf,
+                    cod_tns,
+                    padre_tns,
+                    matricola
+                FROM employees
+                WHERE tx_cod_fiscale IS NOT NULL
+                ORDER BY titolare
+            """)
+            employees_rows = cursor.fetchall()
+
+            if employees_rows:
+                personale_data = []
+                for row in employees_rows:
+                    personale_data.append({
+                        'TxCodFiscale': row[0] or '',
+                        'Titolare': row[1] or '',
+                        'Codice': row[2] or '',
+                        'DESCRIZIONE': f"{row[3] or ''} {row[4] or ''}".strip(),
+                        'Qualifica': row[5] or '',
+                        'Area': row[6] or '',
+                        'Sede': row[7] or '',
+                        'LIVELLO': row[8] or '',
+                        'Contratto': row[9] or '',
+                        'RAL': row[10] or 0,
+                        'Data Assunzione': str(row[11]) if row[11] else '',
+                        'Data Cessazione': str(row[12]) if row[12] else '',
+                        'Società': row[13] or '',
+                        'SottoArea': row[14] or '',
+                        'Sesso': row[15] or '',
+                        'Email': row[16] or '',
+                        'CF Responsabile Diretto': row[17] or '',  # Hierarchy: HR
+                        'Codice TNS': row[18] or '',               # Hierarchy: TNS
+                        'Padre TNS': row[19] or '',                # Hierarchy: TNS
+                        'Matricola': row[20] or '',
+                        # Note: CDCCOSTO would need join with org_units - skip for now
+                        'CDCCOSTO': '',
+                        'Unità Organizzativa': '',  # Would need org_units join
+                    })
+                personale = pd.DataFrame(personale_data)
+            else:
+                personale = pd.DataFrame()
+
+            # Query org units directly
+            cursor.execute("""
+                SELECT
+                    codice,
+                    descrizione,
+                    unita_org_livello1,
+                    unita_org_livello2,
+                    cdccosto,
+                    livello,
+                    cdc_amm,
+                    testata_gg
+                FROM org_units
+                WHERE codice IS NOT NULL
+                ORDER BY descrizione
+            """)
+            org_units_rows = cursor.fetchall()
+
+            if org_units_rows:
+                strutture_data = []
+                for row in org_units_rows:
+                    strutture_data.append({
+                        'Codice': row[0] or '',
+                        'DESCRIZIONE': row[1] or '',
+                        'Unità Organizzativa': row[2] or '',
+                        'Unità Organizzativa 2': row[3] or '',
+                        'CDCCOSTO': row[4] or '',
+                        'LIVELLO': str(row[5]) if row[5] is not None else '',
+                        'CdC Amm': row[6] or '',
+                        'Testata GG/2': row[7] or '',
+                        # Parent relationship would need recursive join - skip for now
+                        'UNITA\' OPERATIVA PADRE ': '',
+                    })
+                strutture = pd.DataFrame(strutture_data)
+            else:
+                strutture = pd.DataFrame()
+
+            print(f"[AUTO-LOAD] Convertiti a vecchio formato: {len(personale)} personale, {len(strutture)} strutture")
+
+        else:
+            # === FALLBACK A VECCHIO SCHEMA (personale/strutture) ===
+            print("[AUTO-LOAD] Nuovo schema vuoto, provo vecchio schema...")
+            personale, strutture = db_handler.export_to_dataframe()
 
         # Verifica che ci siano effettivamente dati
         if len(personale) == 0 and len(strutture) == 0:
@@ -594,6 +648,8 @@ def load_data_from_db():
         return True, f"Dati caricati da database: {len(personale)} personale, {len(strutture)} strutture"
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return False, f"Errore caricamento database: {str(e)}"
 
 
@@ -604,251 +660,75 @@ def main():
     # Se database ha dati e session state è vuoto, carica automaticamente
     if not st.session_state.data_loaded and config.DB_PATH.exists():
         try:
+            # DEBUG: Log per capire cosa succede
+            print(f"[DEBUG] Tentativo auto-load da DB: {config.DB_PATH}")
+            print(f"[DEBUG] data_loaded prima: {st.session_state.data_loaded}")
+
+            # Caricamento silenzioso - nessun spinner per non rallentare UX
             success, msg = load_data_from_db()
+
+            print(f"[DEBUG] Auto-load result: success={success}, msg={msg}")
+
             if success:
                 st.session_state.data_loaded = True
-                print(f"✅ Auto-load from DB: {msg}")
+                # Nota: Questo è normale ad ogni refresh - carica dati esistenti dal DB
+                print(f"✓ Auto-load from DB: {msg}")
+                print(f"[DEBUG] data_loaded dopo: {st.session_state.data_loaded}")
             else:
-                print(f"ℹ️ Auto-load skipped: {msg}")
+                # Auto-load fallito - salva errore per mostrarlo
+                st.session_state.autoload_error = msg
+                print(f"• Auto-load skipped: {msg}")
         except Exception as e:
-            print(f"⚠️ Auto-load error: {str(e)}")
-            pass  # Database vuoto o errore, continua a chiedere upload
+            import traceback
+            error_msg = f"Errore auto-load: {str(e)}"
+            st.session_state.autoload_error = error_msg
+            print(f"! Auto-load error: {str(e)}")
+            print(f"[DEBUG] Traceback completo:")
+            traceback.print_exc()
+    else:
+        if st.session_state.data_loaded:
+            print(f"[DEBUG] Dati già caricati in session state")
+        else:
+            print(f"[DEBUG] Database non esiste: {config.DB_PATH}")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RIBBON INTERFACE - STICKY CON SOTTOMENU (Nativo Streamlit, no SecurityError)
+    # ═══════════════════════════════════════════════════════════════════════════
+    if st.session_state.data_loaded:
+        render_sticky_ribbon()  # Sticky ribbon con sottomenu completi
+
+        # Note: Ribbon buttons set st.session_state.current_page,
+        # then page routing below (line 1318+) handles rendering
 
     # === TOP TOOLBAR (sempre visibile) ===
-    show_top_toolbar()
+    # Rimosso temporaneamente per evitare conflitti con ribbon
+    # show_top_toolbar()
 
-    # Header principale (fisso)
-    st.markdown('<div class="main-header">', unsafe_allow_html=True)
-    st.title("✈️ Travel & Expense Approval Management")
-    st.caption("Gruppo Il Sole 24 ORE - Gestione Ruoli Approvazione")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Sidebar per navigazione
+    # ═══════════════════════════════════════════════════════════
+    # SIDEBAR - Quick Panel with actions and contextual tools
+    # ═══════════════════════════════════════════════════════════
     with st.sidebar:
-        st.header("📋 Menu")
+        from ui.sidebar_quick_panel import render_sidebar
+        render_sidebar()
 
-        # === PRIMO IMPORT (solo se DB vuoto) ===
-        if not st.session_state.data_loaded:
-            st.markdown("### 📁 Primo Import")
-            st.info("👋 **Database vuoto**\n\nCarica un file Excel per iniziare")
-
-            uploaded_file = st.file_uploader(
-                "Carica file TNS (.xls/.xlsx)",
-                type=['xls', 'xlsx'],
-                help="File Excel con fogli 'TNS Personale' e 'TNS Strutture'"
-            )
-
-            # Helper per primo import
-            if uploaded_file is None:
-                with st.expander("💡 File di esempio", expanded=False):
-                    st.caption("Puoi usare il file di test:")
-                    st.code("data/input/TNS_HR_Data.xls", language=None)
-                    st.caption("Trascinalo nel box sopra ⬆️")
-
-            if uploaded_file is not None:
-                # Mostra info file immediatamente
-                st.caption(f"📄 **{uploaded_file.name}**")
-                file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
-                st.caption(f"💾 Dimensione: {file_size_mb:.2f} MB")
-
-                # Check if already in staging mode
-                if not st.session_state.get('excel_staging'):
-                    # Load Excel to staging area (NOT yet in database)
-                    with st.spinner("Caricamento file Excel in memoria..."):
-                        success, message = load_excel_to_staging(uploaded_file)
-
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
-
-            st.markdown("---")
-
-        # Navigazione - MENU STRUTTURATO PULITO
-        if st.session_state.data_loaded:
-            st.markdown("### 🧭 Navigazione")
-
-            # === DASHBOARD ===
-            if st.button("📊 Dashboard Home", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "📊 Dashboard Home" else "secondary"):
-                st.session_state.current_page = "📊 Dashboard Home"
-                st.rerun()
-
-            if st.button("🌳 Organigramma", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "🌳 Organigramma" else "secondary",
-                         help="Vista albero e grafico dell'organigramma aziendale"):
-                st.session_state.current_page = "🌳 Organigramma"
-                st.rerun()
-
-            st.markdown("**Gestione Dati**")
-
-            # === GESTIONE ===
-            if st.button("👥 Gestione Personale", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "👥 Gestione Personale" else "secondary"):
-                st.session_state.current_page = "👥 Gestione Personale"
-                st.rerun()
-
-            if st.button("🏗️ Gestione Strutture", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "🏗️ Gestione Strutture" else "secondary"):
-                st.session_state.current_page = "🏗️ Gestione Strutture"
-                st.rerun()
-
-            if st.button("🎭 Gestione Ruoli", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "🎭 Gestione Ruoli" else "secondary"):
-                st.session_state.current_page = "🎭 Gestione Ruoli"
-                st.rerun()
-
-            st.markdown("**Ricerca & Analisi**")
-
-            # === RICERCA & ANALISI ===
-            if st.button("🔍 Ricerca Intelligente", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "🔍 Ricerca Intelligente" else "secondary"):
-                st.session_state.current_page = "🔍 Ricerca Intelligente"
-                st.rerun()
-
-            if st.button("⚖️ Confronta Versioni", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "⚖️ Confronta Versioni" else "secondary"):
-                st.session_state.current_page = "⚖️ Confronta Versioni"
-                st.rerun()
-
-            if st.button("📖 Log Modifiche", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "📖 Log Modifiche" else "secondary"):
-                st.session_state.current_page = "📖 Log Modifiche"
-                st.rerun()
-
-            # === OPERAZIONI AVANZATE (collassate) ===
-            st.markdown("---")
-            with st.expander("🔧 Operazioni Avanzate", expanded=False):
-                st.caption("Operazioni occasionali e amministrazione")
-
-                # Database Management
-                st.markdown("**Gestione Database**")
-
-                uploaded_file_adv = st.file_uploader(
-                    "📤 Re-import Excel",
-                    type=['xls', 'xlsx'],
-                    help="Carica nuovo file per sostituire dati esistenti",
-                    key="upload_advanced"
-                )
-
-                if uploaded_file_adv is not None:
-                    st.warning("⚠️ **Attenzione**: Re-import sovrascrive tutti i dati!")
-                    if st.button("✅ Conferma Re-import", type="primary", use_container_width=True):
-                        # Reset e reload
-                        st.session_state.data_loaded = False
-                        if 'excel_staging' in st.session_state:
-                            del st.session_state.excel_staging
-                        st.rerun()
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("📸 Snapshot Manuale", use_container_width=True, key="adv_snapshot",
-                                help="Crea snapshot manuale dello stato attuale"):
-                        st.session_state.show_manual_snapshot_dialog = True
-                        st.rerun()
-
-                with col2:
-                    if st.button("🗑️ Svuota DB", use_container_width=True, key="adv_clear",
-                                help="Elimina tutti i dati dal database"):
-                        st.session_state.show_clear_db_confirm = True
-                        st.rerun()
-
-                st.markdown("---")
-                st.markdown("**Export & Versioning**")
-
-                if st.button("📦 Gestione Versioni", use_container_width=True, key="adv_versions",
-                             type="primary" if st.session_state.current_page == "📦 Gestione Versioni" else "secondary"):
-                    st.session_state.current_page = "📦 Gestione Versioni"
-                    st.rerun()
-
-                if st.button("🔄 Genera DB_TNS", use_container_width=True, key="adv_dbtns",
-                             type="primary" if st.session_state.current_page == "🔄 Genera DB_TNS" else "secondary"):
-                    st.session_state.current_page = "🔄 Genera DB_TNS"
-                    st.rerun()
-
-                if st.button("💾 Export File", use_container_width=True, key="adv_export",
-                             type="primary" if st.session_state.current_page == "💾 Salvataggio & Export" else "secondary"):
-                    st.session_state.current_page = "💾 Salvataggio & Export"
-                    st.rerun()
-
-                st.markdown("---")
-                st.markdown("**Verifica & Debug**")
-
-                if st.button("🔍 Verifica Consistenza", use_container_width=True, key="adv_sync_check",
-                             type="primary" if st.session_state.current_page == "🔍 Verifica Consistenza" else "secondary",
-                             help="Verifica consistenza DB-Excel per responsabili e approvatori"):
-                    st.session_state.current_page = "🔍 Verifica Consistenza"
-                    st.rerun()
-
-            page = st.session_state.current_page
-        else:
-            # Vista disponibile anche senza file caricato
-            st.markdown("### 🧭 Navigazione")
-
-            st.caption("Funzioni disponibili senza dati:")
-
-            if st.button("⚖️ Confronta Versioni", use_container_width=True,
-                         type="primary" if st.session_state.current_page == "⚖️ Confronta Versioni" else "secondary"):
-                st.session_state.current_page = "⚖️ Confronta Versioni"
-                st.rerun()
-
-            with st.expander("🔧 Operazioni Avanzate", expanded=False):
-                if st.button("📦 Gestione Versioni", use_container_width=True, key="nodb_versions",
-                             type="primary" if st.session_state.current_page == "📦 Gestione Versioni" else "secondary"):
-                    st.session_state.current_page = "📦 Gestione Versioni"
-                    st.rerun()
-
-            st.info("📤 Carica un file Excel per accedere a tutte le funzionalità")
-
-            page = st.session_state.current_page
-        
-        st.markdown("---")
-
-        # === INFO SIDEBAR FOOTER ===
-        if st.session_state.data_loaded:
-            with st.expander("ℹ️ Info Database", expanded=False):
-                try:
-                    # Ottieni ultima modifica
-                    cursor = st.session_state.database_handler.conn.cursor()
-                    cursor.execute("SELECT MAX(timestamp) FROM audit_log")
-                    last_mod = cursor.fetchone()[0]
-                    cursor.close()
-
-                    if last_mod:
-                        st.caption(f"**Ultima modifica:** {last_mod[:19]}")
-                    else:
-                        st.caption("**Nessuna modifica** registrata")
-
-                    # Conta versioni
-                    cursor = st.session_state.database_handler.conn.cursor()
-                    cursor.execute("SELECT COUNT(*) FROM import_versions WHERE completed = 1")
-                    version_count = cursor.fetchone()[0]
-                    cursor.execute("SELECT COUNT(*) FROM import_versions WHERE completed = 1 AND certified = 1")
-                    milestone_count = cursor.fetchone()[0]
-                    cursor.close()
-
-                    st.caption(f"**Versioni:** {version_count} ({milestone_count} milestone)")
-
-                except Exception as e:
-                    st.caption(f"Info non disponibile")
-
-        st.markdown("---")
-        st.caption(f"**v2.0** | UX Redesign")
-        st.caption(f"{config.PAGE_TITLE[:30]}...")
+    # OLD SIDEBAR NAVIGATION CODE REMOVED - Now using ribbon + quick panel
 
     # === MANUAL SNAPSHOT DIALOG ===
     if st.session_state.get('show_manual_snapshot_dialog'):
         st.markdown("---")
-        st.subheader("📸 Crea Snapshot Manuale")
+        st.subheader("Crea Snapshot Manuale")
         st.caption("Salva lo stato attuale del database per poterlo ripristinare in futuro")
 
         # Info stato attuale
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("👥 Personale", len(st.session_state.personale_df))
+            pdf = st.session_state.get('personale_df')
+            p_count = len(pdf) if pdf is not None else 0
+            st.metric("👥 Personale", p_count)
         with col2:
-            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+            sdf = st.session_state.get('strutture_df')
+            s_count = len(sdf) if sdf is not None else 0
+            st.metric("🏗️ Strutture", s_count)
 
         # Input nota
         snapshot_note = st.text_input(
@@ -860,7 +740,7 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("✅ Crea Snapshot", type="primary", use_container_width=True, disabled=not snapshot_note):
+            if st.button("Crea Snapshot", type="primary", use_container_width=True, disabled=not snapshot_note):
                 with st.spinner("Creazione snapshot in corso..."):
                     try:
                         from services.version_manager import VersionManager
@@ -875,8 +755,10 @@ def main():
                         )
 
                         # Complete version (no actual import, just snapshot)
-                        p_count = len(st.session_state.personale_df)
-                        s_count = len(st.session_state.strutture_df)
+                        pdf = st.session_state.get('personale_df')
+                        sdf = st.session_state.get('strutture_df')
+                        p_count = len(pdf) if pdf is not None else 0
+                        s_count = len(sdf) if sdf is not None else 0
 
                         db.complete_import_version(
                             version_id, p_count, s_count,
@@ -891,15 +773,15 @@ def main():
                             user_note=snapshot_note
                         )
 
-                        st.success(f"✅ Snapshot creato con successo!\n📦 {Path(snapshot_path).name}")
+                        st.success(f"✓ Snapshot creato con successo!\n📦 {Path(snapshot_path).name}")
                         st.session_state.show_manual_snapshot_dialog = False
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"❌ Errore creazione snapshot: {str(e)}")
+                        st.error(f"✗ Errore creazione snapshot: {str(e)}")
 
         with col2:
-            if st.button("❌ Annulla", use_container_width=True):
+            if st.button("Annulla", use_container_width=True):
                 st.session_state.show_manual_snapshot_dialog = False
                 st.rerun()
 
@@ -914,9 +796,13 @@ def main():
         # Info stato
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("👥 Personale", len(st.session_state.personale_df))
+            pdf = st.session_state.get('personale_df')
+            p_count = len(pdf) if pdf is not None else 0
+            st.metric("👥 Personale", p_count)
         with col2:
-            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+            sdf = st.session_state.get('strutture_df')
+            s_count = len(sdf) if sdf is not None else 0
+            st.metric("🏗️ Strutture", s_count)
 
         # Nota opzionale
         checkpoint_note = st.text_input(
@@ -928,7 +814,7 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("✅ Crea Checkpoint", type="primary", use_container_width=True):
+            if st.button("✓ Crea Checkpoint", type="primary", use_container_width=True):
                 with st.spinner("Creazione checkpoint..."):
                     try:
                         from services.version_manager import VersionManager
@@ -944,10 +830,10 @@ def main():
                             st.error(message)
 
                     except Exception as e:
-                        st.error(f"❌ Errore: {str(e)}")
+                        st.error(f"✗ Errore: {str(e)}")
 
         with col2:
-            if st.button("❌ Annulla", use_container_width=True):
+            if st.button("Annulla", use_container_width=True):
                 st.session_state.show_checkpoint_dialog = False
                 st.rerun()
 
@@ -962,9 +848,13 @@ def main():
         # Info stato
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("👥 Personale", len(st.session_state.personale_df))
+            pdf = st.session_state.get('personale_df')
+            p_count = len(pdf) if pdf is not None else 0
+            st.metric("👥 Personale", p_count)
         with col2:
-            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+            sdf = st.session_state.get('strutture_df')
+            s_count = len(sdf) if sdf is not None else 0
+            st.metric("🏗️ Strutture", s_count)
 
         # Nota obbligatoria
         milestone_note = st.text_input(
@@ -985,7 +875,7 @@ def main():
 
         with col1:
             can_create = bool(milestone_note and milestone_description)
-            if st.button("✅ Crea Milestone", type="primary", use_container_width=True,
+            if st.button("✓ Crea Milestone", type="primary", use_container_width=True,
                          disabled=not can_create):
                 with st.spinner("Creazione milestone certificata..."):
                     try:
@@ -1005,15 +895,15 @@ def main():
                             st.error(message)
 
                     except Exception as e:
-                        st.error(f"❌ Errore: {str(e)}")
+                        st.error(f"✗ Errore: {str(e)}")
 
         with col2:
-            if st.button("❌ Annulla", use_container_width=True):
+            if st.button("Annulla", use_container_width=True):
                 st.session_state.show_milestone_dialog = False
                 st.rerun()
 
         if not can_create:
-            st.warning("⚠️ Nota e descrizione sono obbligatorie per le milestone")
+            st.warning("! Nota e descrizione sono obbligatorie per le milestone")
 
         st.stop()
 
@@ -1021,21 +911,25 @@ def main():
     if st.session_state.get('show_clear_db_confirm'):
         st.markdown("---")
         st.error("### 🗑️ Conferma Eliminazione Database")
-        st.warning("⚠️ **ATTENZIONE**: Questa operazione eliminerà **TUTTI** i dati dal database!")
+        st.warning("! **ATTENZIONE**: Questa operazione eliminerà **TUTTI** i dati dal database!")
 
         st.markdown("**Dati che verranno eliminati:**")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("👥 Personale", len(st.session_state.personale_df))
+            pdf = st.session_state.get('personale_df')
+            p_count = len(pdf) if pdf is not None else 0
+            st.metric("👥 Personale", p_count)
         with col2:
-            st.metric("🏗️ Strutture", len(st.session_state.strutture_df))
+            sdf = st.session_state.get('strutture_df')
+            s_count = len(sdf) if sdf is not None else 0
+            st.metric("🏗️ Strutture", s_count)
 
         st.markdown("💡 **Suggerimento**: Crea un checkpoint prima di eliminare")
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("💾 Checkpoint Prima", use_container_width=True):
+            if st.button("Checkpoint Prima", use_container_width=True):
                 st.session_state.show_checkpoint_dialog = True
                 st.session_state.show_clear_db_confirm = False
                 st.rerun()
@@ -1052,28 +946,75 @@ def main():
                     st.session_state.database_handler.conn.commit()
                     st.session_state.data_loaded = False
                     st.session_state.show_clear_db_confirm = False
-                    st.success("✅ Database eliminato")
+                    st.success("✓ Database eliminato")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Errore: {str(e)}")
+                    st.error(f"✗ Errore: {str(e)}")
 
         with col3:
-            if st.button("❌ Annulla", use_container_width=True):
+            if st.button("Annulla", use_container_width=True):
                 st.session_state.show_clear_db_confirm = False
                 st.rerun()
 
         st.stop()
 
+    # ═══════════════════════════════════════════════════════════
+    # MODAL WIZARDS RENDERING (blocking - must be before routing)
+    # ═══════════════════════════════════════════════════════════
+
+    # Onboarding Wizard Modal (first-time setup)
+    from ui.wizard_state_manager import get_onboarding_wizard
+    onboarding_wizard = get_onboarding_wizard()
+    if onboarding_wizard.is_active:
+        from ui.wizard_onboarding_modal import render_onboarding_wizard
+        render_onboarding_wizard()
+        st.stop()  # Block all other content rendering
+
+    # Import Wizard Modal
+    from ui.wizard_state_manager import get_import_wizard
+    import_wizard = get_import_wizard()
+    if import_wizard.is_active:
+        from ui.wizard_import_modal import render_wizard_import_modal
+        render_wizard_import_modal()
+        st.stop()  # Block all other content rendering
+
+    # Settings Wizard Modal
+    from ui.wizard_state_manager import get_settings_wizard
+    settings_wizard = get_settings_wizard()
+    if settings_wizard.is_active:
+        from ui.wizard_settings_modal import render_wizard_settings_modal
+        render_wizard_settings_modal()
+        st.stop()  # Block all other content rendering
+
+    # ═══════════════════════════════════════════════════════════
+    # CONTINUE WITH NORMAL PAGE ROUTING
+    # ═══════════════════════════════════════════════════════════
+
     # === STAGING EXPLORER (dati Excel caricati ma non ancora nel DB) ===
     if st.session_state.get('excel_staging'):
         staging = st.session_state.excel_staging
-        personale_df = staging['personale_df']
-        strutture_df = staging['strutture_df']
+
+        # Handle different formats (DB_ORG vs TNS)
+        file_format = staging.get('format', 'TNS')
+
+        if file_format == 'DB_ORG':
+            # DB_ORG format - single dataframe
+            df = staging.get('data')
+            if df is not None:
+                personale_df = df[df['TxCodFiscale'].notna()] if 'TxCodFiscale' in df.columns else df
+                strutture_df = df[df['TxCodFiscale'].isna()] if 'TxCodFiscale' in df.columns else pd.DataFrame()
+            else:
+                personale_df = pd.DataFrame()
+                strutture_df = pd.DataFrame()
+        else:
+            # TNS format - separate dataframes
+            personale_df = staging.get('personale_df', staging.get('personale', pd.DataFrame()))
+            strutture_df = staging.get('strutture_df', staging.get('strutture', pd.DataFrame()))
 
         st.markdown("---")
         st.title("🔍 Esplora Dati Excel")
-        st.caption(f"**File:** {staging['filename']} ({staging['file_size_mb']:.2f} MB)")
-        st.info("📋 **I dati sono caricati in memoria (NON ancora nel database)**. Esplora e verifica tutto prima di importare.")
+        st.caption(f"**File:** {staging.get('filename', 'N/A')} ({staging.get('file_size_mb', 0):.2f} MB)")
+        st.info("• **I dati sono caricati in memoria (NON ancora nel database)**. Esplora e verifica tutto prima di importare.")
 
         # === CONTEGGI ===
         col1, col2, col3 = st.columns(3)
@@ -1082,7 +1023,7 @@ def main():
         with col2:
             st.metric("🏗️ Strutture", len(strutture_df))
         with col3:
-            st.metric("📊 Totale Record", len(personale_df) + len(strutture_df))
+            st.metric("• Totale Record", len(personale_df) + len(strutture_df))
 
         st.markdown("---")
 
@@ -1090,7 +1031,7 @@ def main():
         tab1, tab2 = st.tabs(["👥 Personale (Dipendenti)", "🏗️ Strutture Organizzative"])
 
         with tab1:
-            st.markdown(f"### 👥 Personale - Tutti i {len(personale_df)} dipendenti")
+            st.markdown(f"### Personale - Tutti i {len(personale_df)} dipendenti")
             st.caption("Tabella completa - Scorri per vedere tutti i record")
 
             # Mostra TUTTA la tabella
@@ -1102,14 +1043,14 @@ def main():
             )
 
             # Stats aggiuntive
-            with st.expander("📊 Statistiche Personale"):
+            with st.expander("• Statistiche Personale"):
                 st.write(f"- **Totale dipendenti:** {len(personale_df)}")
                 st.write(f"- **Codici Fiscali univoci:** {personale_df['TxCodFiscale'].nunique()}")
                 st.write(f"- **Unità Organizzative:** {personale_df['Unità Organizzativa'].nunique()}")
                 st.write(f"- **Approvatori (SÌ):** {len(personale_df[personale_df['Approvatore'] == 'SÌ'])}")
 
         with tab2:
-            st.markdown(f"### 🏗️ Strutture - Tutte le {len(strutture_df)} strutture")
+            st.markdown(f"### Strutture - Tutte le {len(strutture_df)} strutture")
             st.caption("Tabella completa - Scorri per vedere tutte le strutture")
 
             # Mostra TUTTA la tabella
@@ -1121,7 +1062,7 @@ def main():
             )
 
             # Stats aggiuntive
-            with st.expander("📊 Statistiche Strutture"):
+            with st.expander("• Statistiche Strutture"):
                 col_padre = "UNITA' OPERATIVA PADRE "
                 st.write(f"- **Totale strutture:** {len(strutture_df)}")
                 st.write(f"- **Codici univoci:** {strutture_df['Codice'].nunique()}")
@@ -1130,8 +1071,8 @@ def main():
         st.markdown("---")
 
         # === CONFERMA IMPORT ===
-        st.markdown("### ✅ Conferma Import nel Database")
-        st.warning("⚠️ **Attenzione:** L'import nel database sovrascriverà i dati esistenti (se presenti).")
+        st.markdown("### ✓ Conferma Import nel Database")
+        st.warning("! **Attenzione:** L'import nel database sovrascriverà i dati esistenti (se presenti).")
 
         user_note = st.text_input(
             "💬 Nota descrittiva (opzionale)",
@@ -1142,7 +1083,7 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("✅ Importa nel Database", type="primary", use_container_width=True):
+            if st.button("✓ Importa nel Database", type="primary", use_container_width=True):
                 with st.spinner("Importazione in corso nel database..."):
                     success, msg = confirm_import_from_staging(user_note)
 
@@ -1154,7 +1095,7 @@ def main():
                         st.error(msg)
 
         with col2:
-            if st.button("❌ Annulla e Ricarica", use_container_width=True):
+            if st.button("Annulla e Ricarica", use_container_width=True):
                 del st.session_state.excel_staging
                 st.info("🗑️ Dati rimossi da memoria. Carica un nuovo file.")
                 st.rerun()
@@ -1190,7 +1131,7 @@ def main():
         with col3:
             total = stats['personale_count'] + stats['strutture_count']
             st.metric(
-                "📊 Record Totali",
+                "• Record Totali",
                 total,
                 help="Totale record che verranno importati"
             )
@@ -1231,7 +1172,7 @@ def main():
 
         # === CONFERMA CARICAMENTO ===
         st.markdown("---")
-        st.markdown("### ✅ Conferma Caricamento")
+        st.markdown("### ✓ Conferma Caricamento")
 
         user_note = st.text_input(
             "💬 Nota descrittiva (opzionale)",
@@ -1242,7 +1183,7 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("✅ Carica nel Database", type="primary", use_container_width=True):
+            if st.button("✓ Carica nel Database", type="primary", use_container_width=True):
                 with st.spinner("Caricamento in corso..."):
                     success, msg = confirm_import_with_version(preview, user_note)
                     if success:
@@ -1253,139 +1194,207 @@ def main():
                         st.error(msg)
 
         with col2:
-            if st.button("❌ Annulla", use_container_width=True):
+            if st.button("Annulla", use_container_width=True):
                 del st.session_state.import_preview
                 st.rerun()
 
         st.stop()  # Blocca rendering resto pagina durante preview
 
+    # === CASO SPECIALE: Import DB_ORG accessibile anche senza dati caricati ===
+    if st.session_state.current_page == "Import DB_ORG":
+        from ui.db_org_import_view import render_db_org_import_view
+        render_db_org_import_view()
+        st.stop()  # Blocca rendering resto pagina
+
+    # === DEBUG INFO (rimuovere dopo fix) ===
+    with st.expander("🔧 DEBUG INFO", expanded=True):
+        st.write(f"**data_loaded:** {st.session_state.data_loaded}")
+        st.write(f"**DB path:** {config.DB_PATH}")
+        st.write(f"**DB exists:** {config.DB_PATH.exists()}")
+        if config.DB_PATH.exists():
+            import os
+            st.write(f"**DB size:** {os.path.getsize(config.DB_PATH) / 1024:.2f} KB")
+
+        if st.session_state.get('personale_df') is not None:
+            st.write(f"**personale_df:** {len(st.session_state.personale_df)} records")
+        else:
+            st.write(f"**personale_df:** None")
+
+        if st.session_state.get('strutture_df') is not None:
+            st.write(f"**strutture_df:** {len(st.session_state.strutture_df)} records")
+        else:
+            st.write(f"**strutture_df:** None")
+
+        # Mostra errore auto-load se presente
+        if st.session_state.get('autoload_error'):
+            st.error(f"**❌ Errore Auto-load:**\n{st.session_state.autoload_error}")
+
     # Contenuto principale
     if not st.session_state.data_loaded:
-        # Schermata benvenuto
+        # ═══════════════════════════════════════════════════════════
+        # WELCOME SCREEN - Professional onboarding experience
+        # ═══════════════════════════════════════════════════════════
+
+        # Hero section
         st.markdown("""
-        ## Benvenuto nel Sistema di Gestione Approvazioni
+        <div style="text-align: center; padding: 3rem 1rem;">
+            <h1>🎉 Benvenuto in HR Management Platform</h1>
+            <p style="font-size: 1.2rem; color: var(--text-color-secondary);">
+                Sistema completo per gestione organigrammi e dati HR
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        **Gestisci i ruoli di approvazione per trasferte e note spese**
+        # Main actions - centered layout
+        col1, col2, col3 = st.columns([1, 2, 1])
 
-        Questa applicazione ti permette di:
+        with col2:
+            st.markdown("### Per iniziare, scegli:")
 
-        - 📊 **Visualizzare** statistiche e anomalie sui ruoli di approvazione
-        - ✏️ **Modificare** ruoli dipendenti (Approvatori, Controllori, Cassieri, etc.)
-        - 🏗️ **Gestire** struttura organizzativa e gerarchie
-        - ✅ **Validare** dati con controlli automatici (CF, riferimenti, cicli)
-        - 🔄 **Generare** il foglio DB_TNS per export al sistema trasferte
-        - 💾 **Salvare** ed esportare i dati aggiornati con backup automatico
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        ### 🚀 Primo Import - Come iniziare:
+            # PRIMARY: Guided setup
+            if st.button(
+                "🚀 AVVIA CONFIGURAZIONE GUIDATA",
+                type="primary",
+                use_container_width=True,
+                help="Setup guidato passo-passo (consigliato per nuovi utenti)"
+            ):
+                from ui.wizard_onboarding_modal import get_onboarding_wizard
+                get_onboarding_wizard().activate()
+                st.rerun()
 
-        1. **📁 Carica file Excel** dalla sidebar (in alto a sinistra)
-           - File di esempio disponibile: `data/input/TNS_HR_Data.xls`
-           - Oppure usa il tuo file Excel con fogli "TNS Personale" e "TNS Strutture"
+            st.markdown("---")
 
-        2. **🔍 Anteprima file** (se attivata):
-           - Vedi conteggi: dipendenti, strutture, totale
-           - Verifica prime 5 righe di ogni tipo
-           - Aggiungi nota descrittiva (opzionale): es. "Primo import database"
+            # ALTERNATIVE: Direct import
+            if st.button(
+                "📂 Importa File Direttamente",
+                use_container_width=True,
+                help="Per utenti esperti - salta la guida e importa subito"
+            ):
+                from ui.wizard_state_manager import get_import_wizard
+                get_import_wizard().activate()
+                st.rerun()
 
-        3. **✅ Conferma caricamento**:
-           - Clicca "Carica nel Database"
-           - Attendi il messaggio di successo
-           - Uno snapshot viene creato automaticamente per recovery
+        st.markdown("<br><br>", unsafe_allow_html=True)
 
-        4. **🎉 Database pronto!**:
-           - Naviga tra le sezioni usando il menu
-           - Modifica ruoli e strutture
-           - Usa "📸 Crea Snapshot Manuale" prima di modifiche importanti
+        # Info boxes - expandable
+        col1, col2 = st.columns(2)
 
-        ### 📋 Struttura file Excel:
+        with col1:
+            with st.expander("💡 Cosa puoi fare con questa piattaforma"):
+                st.markdown("""
+                - **Gestire organigrammi** multipli (HR, TNS, SGSL)
+                - **Importare dati** da Excel con mappatura intelligente
+                - **Visualizzare gerarchie** interattive
+                - **Tracciare modifiche** con versioning automatico
+                - **Generare export** in formato DB_TNS
+                - **Validare dati** con controlli automatici
+                """)
 
-        - **TNS Personale**: dipendenti con ruoli approvazione (Viaggiatore, Approvatore, Controllore, Cassiere, etc.)
-        - **TNS Strutture**: organigramma aziendale (gerarchia organizzativa)
-        - **DB_TNS**: merge generato automaticamente per import IT
+        with col2:
+            with st.expander("📚 Formati file supportati"):
+                st.markdown("""
+                **DB_ORG** (consigliato):
+                - Mappatura colonne automatica
+                - 135+ colonne supportate
+                - Validazione avanzata
 
-        ### ✈️ Ruoli Chiave:
+                **TNS** (legacy):
+                - Fogli separati per Personale e Strutture
+                - Compatibilità con sistema legacy
+                """)
 
-        - **Viaggiatore**: può inserire richieste trasferte/note spese
-        - **Approvatore**: approva le richieste
-        - **Controllore**: controlla/audita le spese
-        - **Cassiere**: gestisce i pagamenti
-        - **Segretario**: supporto amministrativo
-        - **Assistenti**: deleghe per approvatori/controllori/segretari
-        """)
-        
-        # Esempio struttura
-        with st.expander("📖 Struttura dati e campi chiave"):
+        # Additional help
+        with st.expander("🆘 Serve aiuto?"):
             st.markdown("""
-            **TNS Personale** (dipendenti con ruoli):
-            - ✅ TxCodFiscale OBBLIGATORIO (16 caratteri)
-            - ✅ Titolare (nome dipendente)
-            - ✅ Codice univoco
-            - ✅ UNITA' OPERATIVA PADRE (gerarchia)
-            - **Ruoli Approvazione Trasferte**:
-              - Viaggiatore, Approvatore, Controllore, Cassiere
-              - Segretario, Visualizzatori, Amministrazione
-              - SegreteriA Red. Ass.ta, SegretariO Ass.to, Controllore Ass.to
-              - RuoliAFC, RuoliHR, AltriRuoli
-            - Sede_TNS, GruppoSind
+            **File di esempio**: Puoi usare `data/input/TNS_HR_Data.xls` per testare l'import.
 
-            **TNS Strutture** (organigramma):
-            - ❌ TxCodFiscale VUOTO (distingue da Personale)
-            - ✅ DESCRIZIONE (nome unità organizzativa)
-            - ✅ Codice univoco
-            - Padre: UNITA' OPERATIVA PADRE (gerarchia)
+            **Primo import**: Segui la configurazione guidata per un setup passo-passo.
 
-            **DB_TNS** (generato per export):
-            - Merge automatico: Strutture + Personale
-            - Ordine critico: prima Strutture, poi Personale
-            - Pronto per import nel sistema trasferte/note spese
+            **Supporto**: Per assistenza, contatta il team IT.
             """)
     
     else:
         # === BREADCRUMB / PAGE INDICATOR ===
         page = st.session_state.current_page
 
-        # Mostra breadcrumb
-        st.markdown(f'<div class="breadcrumb">📍 Sei qui: <b>{page}</b></div>', unsafe_allow_html=True)
-        st.markdown("---")
+        # Auto-select default pages when ribbon tabs are active
+        active_ribbon_tab = st.session_state.get('active_ribbon_tab', 'Home')
+
+        if active_ribbon_tab == 'Organigrammi' and page == "Dashboard Home":
+            # User clicked Organigrammi tab but no specific organigramma selected
+            # Auto-select HR Hierarchy as default
+            page = "HR Hierarchy"
+            st.session_state.current_page = "HR Hierarchy"
+
+        elif active_ribbon_tab == 'Gestione Dati' and page == "Dashboard Home":
+            # User clicked Gestione Dati tab but no specific page selected
+            # Auto-select Gestione Personale as default
+            page = "Gestione Personale"
+            st.session_state.current_page = "Gestione Personale"
 
         # Routing pagine - NUOVO MENU
-        if page == "📊 Dashboard Home":
+        if page == "Dashboard Home":
             from ui.dashboard import show_dashboard
             show_dashboard()
 
-        elif page == "🌳 Organigramma":
-            from ui.organigramma_view import show_organigramma_view
-            show_organigramma_view()
+        elif page == "Dashboard DB_ORG":
+            from ui.dashboard_extended import render_dashboard_extended
+            render_dashboard_extended()
 
-        elif page == "👥 Gestione Personale":
+        elif page == "HR Hierarchy":
+            from ui.orgchart_hr_view import render_orgchart_hr_view
+            render_orgchart_hr_view()
+
+        elif page == "ORG Hierarchy":
+            from ui.orgchart_org_view import render_orgchart_org_view
+            render_orgchart_org_view()
+
+        elif page == "TNS Hierarchy":
+            from ui.orgchart_tns_structures_view import render_orgchart_tns_structures_view
+            render_orgchart_tns_structures_view()
+
+        elif page == "SGSL Safety":
+            st.info("🚧 Organigramma SGSL Safety in development")
+
+        elif page == "Unità Organizzative":
+            from ui.orgchart_positions_view import render_orgchart_positions_view
+            render_orgchart_positions_view()
+
+        elif page == "Gestione Personale":
             from ui.personale_view import show_personale_view
             show_personale_view()
 
-        elif page == "🏗️ Gestione Strutture":
+        elif page == "Gestione Strutture":
             from ui.strutture_view import show_strutture_view
             show_strutture_view()
 
-        elif page == "🎭 Gestione Ruoli":
+        elif page == "Gestione Posizioni":
+            from ui.posizioni_view import show_posizioni_view
+            show_posizioni_view()
+
+        elif page == "Gestione Ruoli":
             from ui.ruoli_view import show_ruoli_view
             show_ruoli_view()
 
-        elif page == "🔍 Ricerca Intelligente":
+        elif page == "Ricerca Intelligente":
             from ui.search_view import show_search_view
             show_search_view()
 
-        elif page == "⚖️ Confronta Versioni":
+        elif page == "Confronta Versioni":
             from ui.compare_view import show_compare_view
             show_compare_view()
 
-        elif page == "📖 Log Modifiche":
+        elif page == "Log Modifiche":
             from ui.audit_log_view import show_audit_log_view
             show_audit_log_view()
 
-        elif page == "📦 Gestione Versioni":
+        elif page == "Gestione Versioni":
             from ui.version_management_view import show_version_management_view
             show_version_management_view()
 
-        elif page == "🔄 Genera DB_TNS":
+        elif page == "Genera DB_TNS":
             from ui.merger_view import show_merger_view
             show_merger_view()
 
@@ -1393,9 +1402,29 @@ def main():
             from ui.save_export_view import show_save_export_view
             show_save_export_view()
 
-        elif page == "🔍 Verifica Consistenza":
+        elif page == "Verifica Consistenza":
             from ui.sync_check_view import show_sync_check_view
             show_sync_check_view()
+
+        elif page == "Import DB_ORG":
+            from ui.db_org_import_view import render_db_org_import_view
+            render_db_org_import_view()
+
+        elif page == "Scheda Dipendente":
+            from ui.employee_card_view import render_employee_card_view
+            render_employee_card_view()
+
+        elif page == "Scheda Strutture":
+            from ui.structure_card_view import render_structure_card_view
+            render_structure_card_view()
+
+        elif page == "Vista Tabellare":
+            from ui.tabular_view import show_tabular_view
+            show_tabular_view()
+
+        elif page == "Impostazioni":
+            from ui.settings_view import show_settings_view
+            show_settings_view()
 
 
 if __name__ == "__main__":

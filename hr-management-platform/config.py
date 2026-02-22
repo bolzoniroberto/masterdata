@@ -68,8 +68,8 @@ KEY_FIELD_STRUTTURE = "Codice"
 PARENT_FIELD = "UNITA' OPERATIVA PADRE "
 
 # Settings UI
-PAGE_TITLE = "Travel & Expense Approval Management - Gruppo Il Sole 24 ORE"
-PAGE_ICON = "✈️"
+PAGE_TITLE = "HR Masterdata Management - Gruppo Il Sole 24 ORE"
+PAGE_ICON = "📊"
 LAYOUT = "wide"
 
 # Versionamento

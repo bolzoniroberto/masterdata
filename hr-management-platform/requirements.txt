@@ -1,0 +1,11 @@
+gitpython==3.1.41
+ollama==0.1.6
+openpyxl==3.1.2
+pandas==2.2.0
+plotly==5.18.0
+pydantic==2.6.0
+requests==2.31.0
+sqlmodel
+streamlit>=1.35.0
+streamlit-aggrid==0.3.4.post3
+xlrd==2.0.1

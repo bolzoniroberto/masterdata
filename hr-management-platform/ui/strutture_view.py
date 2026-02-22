@@ -7,19 +7,20 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from services.validator import DataValidator
-from ui.styles import apply_common_styles, render_filter_badge
-
+from ui.styles import render_filter_badge
 
 def show_strutture_view():
     """UI per gestione strutture organizzative con master-detail pattern"""
 
-    apply_common_styles()
-
-    st.header("🏗️ Gestione Strutture")
     st.caption("Gestisci organigramma aziendale e relazioni gerarchiche")
 
-    strutture_df = st.session_state.strutture_df
-    personale_df = st.session_state.personale_df
+    # Get dataframes with safety check
+    strutture_df = st.session_state.get('strutture_df')
+    personale_df = st.session_state.get('personale_df')
+
+    if strutture_df is None or personale_df is None:
+        st.warning("⚠️ Nessun dato disponibile. Importa un file Excel per iniziare.")
+        return
 
     # Statistiche rapide
     col1, col2, col3, col4 = st.columns(4)
@@ -35,8 +36,6 @@ def show_strutture_view():
     with col4:
         roots = strutture_df['UNITA\' OPERATIVA PADRE '].isna().sum()
         st.metric("Root", roots)
-
-    st.markdown("---")
 
     # === 3 TAB INVECE DI 5 ===
     tab1, tab2, tab3 = st.tabs([
@@ -56,7 +55,6 @@ def show_strutture_view():
     # === TAB 3: GERARCHIA ALBERO ===
     with tab3:
         show_hierarchy_tab(strutture_df, personale_df)
-
 
 def show_gestione_tab(strutture_df: pd.DataFrame, personale_df: pd.DataFrame):
     """Tab Gestione con master-detail layout"""
@@ -154,7 +152,6 @@ def show_gestione_tab(strutture_df: pd.DataFrame, personale_df: pd.DataFrame):
         else:
             st.info("👈 Seleziona una struttura dalla tabella per visualizzare i dettagli")
 
-
 def show_structure_detail_panel(strutture_df: pd.DataFrame, personale_df: pd.DataFrame, filtered_df: pd.DataFrame):
     """Mostra detail panel per struttura selezionata"""
 
@@ -183,8 +180,6 @@ def show_structure_detail_panel(strutture_df: pd.DataFrame, personale_df: pd.Dat
         st.metric("👥 Dipendenti Diretti", num_dipendenti)
     with col2:
         st.metric("🏗️ Sotto-Strutture", num_sotto_strutture)
-
-    st.markdown("---")
 
     # === SEZIONE 1: DATI ESSENZIALI ===
     st.markdown("#### 📋 Dati Essenziali")
@@ -242,8 +237,6 @@ def show_structure_detail_panel(strutture_df: pd.DataFrame, personale_df: pd.Dat
             new_campo20 = st.text_input("Campo 20", value=record['Campo20'] or "", key="edit_c20_strut")
             new_campo21 = st.text_input("Campo 21", value=record['Campo21'] or "", key="edit_c21_strut")
             new_campo22 = st.text_input("Campo 22", value=record['Campo22'] or "", key="edit_c22_strut")
-
-    st.markdown("---")
 
     # === BOTTONI AZIONE ===
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -372,7 +365,6 @@ def show_structure_detail_panel(strutture_df: pd.DataFrame, personale_df: pd.Dat
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-
 def would_create_cycle(strutture_df: pd.DataFrame, codice: str, new_padre: str) -> bool:
     """
     Verifica se impostare new_padre come padre di codice creerebbe un ciclo.
@@ -404,7 +396,6 @@ def would_create_cycle(strutture_df: pd.DataFrame, codice: str, new_padre: str) 
             break
 
     return False
-
 
 def show_add_tab(strutture_df: pd.DataFrame):
     """Tab per aggiungere nuova struttura"""
@@ -471,7 +462,6 @@ def show_add_tab(strutture_df: pd.DataFrame):
                 st.success(f"✅ Struttura {new_desc} aggiunta")
                 st.session_state.show_feedback = True
                 st.rerun()
-
 
 def show_hierarchy_tab(strutture_df: pd.DataFrame, personale_df: pd.DataFrame):
     """Tab visualizzazione gerarchia (mantiene logica esistente)"""
@@ -565,7 +555,6 @@ def show_hierarchy_tab(strutture_df: pd.DataFrame, personale_df: pd.DataFrame):
                     hide_index=True
                 )
 
-
 # === FUNZIONI HELPER PER GERARCHIA (mantenute dall'originale) ===
 
 def get_hierarchy_path(strutture_df: pd.DataFrame, codice: str) -> list:
@@ -591,7 +580,6 @@ def get_hierarchy_path(strutture_df: pd.DataFrame, codice: str) -> list:
         current = padre
 
     return path
-
 
 def show_accordion_compact(
     structure_row,
@@ -632,7 +620,6 @@ def show_accordion_compact(
             strutture_df, personale_df, level, unique_key,
             hide_empty
         )
-
 
 def render_compact_content(
     code: str,

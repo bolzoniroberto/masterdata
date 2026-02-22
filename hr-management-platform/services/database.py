@@ -3,6 +3,7 @@ Service per gestione SQLite database - Persistenza dati primaria
 Database-centric architecture: SQLite source of truth + session state cache
 """
 import sqlite3
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
@@ -36,14 +37,20 @@ class DatabaseHandler:
         # Assicura che la directory esista
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Connessione al database
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row  # Dict-like rows
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        # Thread-local storage per connessioni SQLite (Streamlit multi-thread safe)
+        self._local = threading.local()
+
+    def get_connection(self) -> sqlite3.Connection:
+        """Restituisce connessione SQLite thread-local (crea se non esiste)."""
+        if not hasattr(self._local, 'conn') or self._local.conn is None:
+            self._local.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self._local.conn.row_factory = sqlite3.Row
+            self._local.conn.execute("PRAGMA foreign_keys = ON")
+        return self._local.conn
 
     def init_db(self):
         """Crea schema database se non esiste"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             # === TABELLA PERSONALE ===
@@ -192,11 +199,11 @@ class DatabaseHandler:
 
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_import_timestamp ON import_versions(timestamp)")
 
-            self.conn.commit()
+            self.get_connection().commit()
             print(f"✅ Database initialized: {self.db_path}")
 
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore inizializzazione database: {str(e)}")
         finally:
             cursor.close()
@@ -214,18 +221,18 @@ class DatabaseHandler:
         Returns:
             ID della nuova versione import creata
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("""
                 INSERT INTO import_versions (source_filename, user_note, completed)
                 VALUES (?, ?, 0)
             """, (source_filename, user_note))
-            self.conn.commit()
+            self.get_connection().commit()
             version_id = cursor.lastrowid
             print(f"✅ Import version #{version_id} iniziata: {source_filename}")
             return version_id
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore creazione import version: {str(e)}")
         finally:
             cursor.close()
@@ -242,7 +249,7 @@ class DatabaseHandler:
             strutture_count: Numero record strutture importati
             changes_summary: JSON summary delle modifiche (severity counts)
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("""
                 UPDATE import_versions
@@ -250,10 +257,10 @@ class DatabaseHandler:
                     personale_count = ?, strutture_count = ?, changes_summary = ?
                 WHERE id = ?
             """, (personale_count, strutture_count, changes_summary, import_version_id))
-            self.conn.commit()
+            self.get_connection().commit()
             print(f"✅ Import version #{import_version_id} completata")
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore completamento import version: {str(e)}")
         finally:
             cursor.close()
@@ -268,7 +275,7 @@ class DatabaseHandler:
         Returns:
             Lista dizionari con info versioni
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("""
                 SELECT * FROM import_versions
@@ -294,7 +301,7 @@ class DatabaseHandler:
         Returns:
             True se inserimento riuscito
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             # Normalizza nomi campi da Excel a DB
@@ -315,14 +322,14 @@ class DatabaseHandler:
                           record_dict.get('TxCodFiscale', 'N/A'),
                           before=None, after=db_record)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
 
         except sqlite3.IntegrityError as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise ValueError(f"Errore inserimento personale (duplicate key?): {str(e)}")
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore inserimento personale: {str(e)}")
         finally:
             cursor.close()
@@ -338,7 +345,7 @@ class DatabaseHandler:
         Returns:
             True se aggiornamento riuscito
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             # Normalizza nomi campi
@@ -367,18 +374,18 @@ class DatabaseHandler:
             self._log_audit('UPDATE', 'personale', tx_cod_fiscale,
                           before=before, after=after)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
 
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore aggiornamento personale: {str(e)}")
         finally:
             cursor.close()
 
     def get_personale_all(self) -> List[Dict]:
         """Leggi tutti i record dipendenti"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("SELECT * FROM personale ORDER BY Titolare")
             rows = cursor.fetchall()
@@ -388,7 +395,7 @@ class DatabaseHandler:
 
     def get_personale_by_cf(self, tx_cod_fiscale: str) -> Optional[Dict]:
         """Leggi un dipendente per codice fiscale"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("SELECT * FROM personale WHERE TxCodFiscale = ?",
                          (tx_cod_fiscale,))
@@ -399,7 +406,7 @@ class DatabaseHandler:
 
     def delete_personale(self, tx_cod_fiscale: str) -> bool:
         """Elimina un record dipendente"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             # Log before deletion
             cursor.execute("SELECT * FROM personale WHERE TxCodFiscale = ?",
@@ -412,10 +419,10 @@ class DatabaseHandler:
             self._log_audit('DELETE', 'personale', tx_cod_fiscale,
                           before=before, after=None)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore eliminazione personale: {str(e)}")
         finally:
             cursor.close()
@@ -424,7 +431,7 @@ class DatabaseHandler:
 
     def insert_struttura(self, record_dict: Dict) -> bool:
         """Inserisci una struttura organizzativa"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             db_record = self._normalize_record_to_db(record_dict)
@@ -442,21 +449,21 @@ class DatabaseHandler:
                           record_dict.get('Codice', 'N/A'),
                           before=None, after=db_record)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
 
         except sqlite3.IntegrityError as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise ValueError(f"Errore inserimento struttura (duplicate Codice?): {str(e)}")
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore inserimento struttura: {str(e)}")
         finally:
             cursor.close()
 
     def update_struttura(self, codice: str, updates: Dict) -> bool:
         """Aggiorna una struttura organizzativa"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             db_updates = self._normalize_record_to_db(updates)
@@ -483,18 +490,18 @@ class DatabaseHandler:
             self._log_audit('UPDATE', 'strutture', codice,
                           before=before, after=after)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
 
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore aggiornamento struttura: {str(e)}")
         finally:
             cursor.close()
 
     def get_strutture_all(self) -> List[Dict]:
         """Leggi tutte le strutture"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("SELECT * FROM strutture ORDER BY DESCRIZIONE")
             rows = cursor.fetchall()
@@ -504,7 +511,7 @@ class DatabaseHandler:
 
     def get_struttura_by_codice(self, codice: str) -> Optional[Dict]:
         """Leggi una struttura per codice"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("SELECT * FROM strutture WHERE Codice = ?", (codice,))
             row = cursor.fetchone()
@@ -514,7 +521,7 @@ class DatabaseHandler:
 
     def delete_struttura(self, codice: str) -> bool:
         """Elimina una struttura"""
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             cursor.execute("SELECT * FROM strutture WHERE Codice = ?", (codice,))
             before = dict(cursor.fetchone() or {})
@@ -524,10 +531,10 @@ class DatabaseHandler:
             self._log_audit('DELETE', 'strutture', codice,
                           before=before, after=None)
 
-            self.conn.commit()
+            self.get_connection().commit()
             return True
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore eliminazione struttura: {str(e)}")
         finally:
             cursor.close()
@@ -547,7 +554,7 @@ class DatabaseHandler:
         Returns:
             Tuple (personale_count, strutture_count) record importati
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
 
         try:
             # Pulisci database (audit_log NON viene cancellato per persistenza storico)
@@ -587,12 +594,12 @@ class DatabaseHandler:
                         print(f"⚠️ Skip struttura record: {str(e)}")
                         continue
 
-            self.conn.commit()
+            self.get_connection().commit()
             print(f"✅ Import completato: {personale_count} personale, {strutture_count} strutture")
             return personale_count, strutture_count
 
         except Exception as e:
-            self.conn.rollback()
+            self.get_connection().rollback()
             raise Exception(f"Errore import dataframe: {str(e)}")
         finally:
             cursor.close()
@@ -641,7 +648,7 @@ class DatabaseHandler:
         Returns:
             Lista dizionari con audit records
         """
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             if table_name:
                 cursor.execute(
@@ -733,7 +740,7 @@ class DatabaseHandler:
         """Log operazione audit con versioning e severity classification"""
         import json
 
-        cursor = self.conn.cursor()
+        cursor = self.get_connection().cursor()
         try:
             before_json = json.dumps(before, default=str) if before else None
             after_json = json.dumps(after, default=str) if after else None
@@ -762,7 +769,7 @@ class DatabaseHandler:
                 VALUES (?, ?, ?, ?, ?)
                 """, (table_name, operation, record_key, before_json, after_json))
 
-            self.conn.commit()
+            self.get_connection().commit()
         except Exception as e:
             print(f"⚠️ Errore logging audit: {str(e)}")
         finally:
@@ -801,10 +808,140 @@ class DatabaseHandler:
         # Tutti gli altri campi
         return 'LOW'
 
+    def clear_all_data(self, confirmation_text: str = "") -> Dict[str, any]:
+        """
+        Svuota completamente il database eliminando tutti i dati da tutte le tabelle.
+
+        ATTENZIONE: Questa operazione è IRREVERSIBILE!
+        - Elimina tutti i record da tutte le tabelle
+        - Mantiene lo schema del database (tabelle e struttura)
+        - Resetta i contatori auto-increment
+        - Crea un log di audit dell'operazione
+
+        Args:
+            confirmation_text: Deve essere esattamente "CONFERMA SVUOTAMENTO" per procedere
+
+        Returns:
+            Dict con statistiche dell'operazione:
+            - success: bool
+            - message: str
+            - records_deleted: int
+            - tables_cleared: List[str]
+        """
+        if confirmation_text != "CONFERMA SVUOTAMENTO":
+            return {
+                'success': False,
+                'message': 'Conferma non valida. Digita esattamente "CONFERMA SVUOTAMENTO"',
+                'records_deleted': 0,
+                'tables_cleared': []
+            }
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Lista di tutte le tabelle da svuotare
+            # ORDINE IMPORTANTE: prima le tabelle dipendenti, poi quelle referenziate
+            tables_to_clear = [
+                'audit_log',                # Log di audit (dipende da tutto)
+                'salary_changes_audit',     # Audit modifiche salari
+                'salary_components_detail', # Dettagli componenti salariali
+                'salary_records',           # Record salari
+                'hierarchy_assignments',    # Assegnamenti gerarchici
+                'role_assignments',         # Assegnamenti ruoli
+                'db_tns',                   # Cache merge
+                'employees',                # Dipendenti
+                'org_units',                # Unità organizzative
+                'companies',                # Aziende
+                'import_versions',          # Versioni import
+                'hierarchy_types',          # Tipi gerarchia
+                'role_definitions',         # Definizioni ruoli
+                'personale',                # Tabella legacy personale
+                'strutture'                 # Tabella legacy strutture
+            ]
+
+            total_deleted = 0
+            cleared_tables = []
+
+            # Disabilita temporaneamente i foreign key constraints
+            cursor.execute("PRAGMA foreign_keys = OFF")
+
+            # Log PRIMA dello svuotamento (così abbiamo traccia)
+            timestamp = datetime.now().isoformat()
+            cursor.execute("""
+                INSERT INTO audit_log (
+                    operation, table_name, record_key,
+                    before_values, after_values,
+                    user_action, change_severity
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                'CLEAR_ALL_DATA',
+                'ALL_TABLES',
+                'FULL_DATABASE_CLEAR',
+                f'Database clear initiated at {timestamp}',
+                'All tables will be emptied',
+                'MANUAL_CLEAR',
+                'CRITICAL'
+            ))
+
+            # Svuota ogni tabella
+            for table in tables_to_clear:
+                try:
+                    # Conta record prima di eliminare
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+
+                    if count > 0:
+                        # Elimina tutti i record
+                        cursor.execute(f"DELETE FROM {table}")
+                        total_deleted += count
+                        cleared_tables.append(f"{table} ({count} record)")
+
+                        # Resetta auto-increment counter se la tabella ha una chiave primaria INTEGER
+                        cursor.execute(f"""
+                            DELETE FROM sqlite_sequence WHERE name = '{table}'
+                        """)
+
+                except sqlite3.Error as e:
+                    # Se la tabella non esiste, continua
+                    if "no such table" not in str(e):
+                        print(f"Warning: Errore durante svuotamento tabella {table}: {e}")
+
+            # Riabilita foreign key constraints
+            cursor.execute("PRAGMA foreign_keys = ON")
+
+            # Commit della transazione PRIMA di VACUUM
+            conn.commit()
+
+            # Ottimizza database dopo la cancellazione massiva (fuori dalla transazione)
+            try:
+                cursor.execute("VACUUM")
+            except sqlite3.OperationalError as e:
+                # VACUUM può fallire se il db è in uso, ma non è critico
+                print(f"Warning: VACUUM failed: {e}")
+
+            return {
+                'success': True,
+                'message': f'Database svuotato con successo. {total_deleted} record eliminati da {len(cleared_tables)} tabelle.',
+                'records_deleted': total_deleted,
+                'tables_cleared': cleared_tables,
+                'timestamp': timestamp
+            }
+
+        except Exception as e:
+            conn.rollback()
+            return {
+                'success': False,
+                'message': f'Errore durante lo svuotamento del database: {str(e)}',
+                'records_deleted': 0,
+                'tables_cleared': []
+            }
+
     def close(self):
-        """Chiudi connessione database"""
-        if self.conn:
-            self.conn.close()
+        """Chiudi connessione database thread-local"""
+        if hasattr(self._local, 'conn') and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None
 
     def __enter__(self):
         """Context manager support"""

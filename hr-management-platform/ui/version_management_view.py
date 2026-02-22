@@ -8,7 +8,6 @@ from pathlib import Path
 import config
 from services.version_manager import VersionManager
 
-
 def show_version_management_view():
     """
     Mostra interfaccia gestione versioni database.
@@ -20,7 +19,6 @@ def show_version_management_view():
     - Elimina snapshot vecchi
     - Cleanup automatico
     """
-    st.header("📦 Gestione Versioni Database")
     st.caption("Visualizza, ripristina ed elimina snapshot del database")
 
     # Inizializza version manager
@@ -47,8 +45,6 @@ def show_version_management_view():
         versions = db.get_import_versions(limit=1)
         current_version = versions[0]['id'] if versions else 0
         st.metric("🔢 Versione Corrente", f"#{current_version}")
-
-    st.markdown("---")
 
     # === LISTA SNAPSHOT ===
     st.markdown("### 📋 Snapshot Disponibili")
@@ -100,8 +96,6 @@ def show_version_management_view():
         height=400,
         hide_index=True
     )
-
-    st.markdown("---")
 
     # === AZIONI ===
     st.markdown("### 🔧 Azioni")
@@ -201,8 +195,6 @@ def show_version_management_view():
                 else:
                     st.info("ℹ️ Nessun snapshot da eliminare")
 
-        st.markdown("---")
-
         # Elimina snapshot specifico
         st.markdown("##### 🗑️ Elimina Snapshot Specifico")
 
@@ -228,8 +220,6 @@ def show_version_management_view():
                     st.rerun()
                 else:
                     st.error(message)
-
-    st.markdown("---")
 
     # === INFORMAZIONI ===
     with st.expander("ℹ️ Come Funziona il Sistema Versioni"):
