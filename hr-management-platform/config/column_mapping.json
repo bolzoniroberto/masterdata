@@ -1,0 +1,13 @@
+{
+  "ID": "ID",
+  "TxCodFiscale": "TxCodFiscale",
+  "Titolare": "Titolare",
+  "Unità Organizzativa": "Unità Organizzativa",
+  "Unità Organizzativa 2": "Unità Organizzativa 2",
+  "ReportsTo": "ReportsTo",
+  "Codice TNS": "COD_TNS",
+  "Padre TNS": "PADRE_TNS",
+  "Matricola": "",
+  "Email": "email",
+  "CF Responsabile Diretto": "Responsabilediretto"
+}

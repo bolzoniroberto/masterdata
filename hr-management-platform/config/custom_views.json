@@ -1,0 +1,77 @@
+{
+  "viste": [
+    {
+      "id": "posizioni_org",
+      "nome": "Posizioni Organizzative",
+      "icona": "🏢",
+      "colonne": [
+        "Codice azienda",
+        "Codice dipendente",
+        "Azienda",
+        "Codice struttura - livello 1",
+        "Descrizione struttura - livello 1",
+        "Codice struttura - livello 2",
+        "Descrizione struttura - livello 2",
+        "Codice centro di costo",
+        "Descrizione centro di costo",
+        "Codice sede",
+        "Descrizione sede",
+        "Decorrenza sede",
+        "Comune sede"
+      ],
+      "bloccata": true
+    },
+    {
+      "id": "info_anagrafiche",
+      "nome": "Informazioni Anagrafiche",
+      "icona": "👤",
+      "colonne": [
+        "Cognome",
+        "Nome",
+        "Codice Fiscale",
+        "Sesso",
+        "Data di nascita",
+        "Data assunzione",
+        "Data di assunzione nel gruppo",
+        "Descrizione causale assunzione"
+      ],
+      "bloccata": true
+    },
+    {
+      "id": "info_aggiuntive",
+      "nome": "Informazioni Aggiuntive",
+      "icona": "📎",
+      "colonne": [
+        "Codice contratto",
+        "Descrizione contratto",
+        "Descrizione qualifica",
+        "Codice livello",
+        "Descrizione livello",
+        "Tipologia Contratto a Termine",
+        "Data scadenza posizione lavorativa"
+      ],
+      "bloccata": true
+    },
+    {
+      "id": "tns_data",
+      "nome": "Dati TNS",
+      "icona": "📋",
+      "colonne": [
+        "Codice posizione lavorativa",
+        "Descrizione posizione lavorativa"
+      ],
+      "bloccata": true
+    },
+    {
+      "id": "gerarchie_it",
+      "nome": "Gerarchie IT",
+      "icona": "🔗",
+      "colonne": [
+        "Codice dipendente",
+        "Codice struttura - livello 1",
+        "Codice struttura - livello 2"
+      ],
+      "bloccata": true
+    }
+  ]
+}

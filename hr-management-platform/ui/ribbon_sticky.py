@@ -339,6 +339,10 @@ def _render_gestione_submenu():
             if st.button("📥 Import DB_ORG", key="cmd_import_db", use_container_width=True):
                 st.session_state.current_page = "Import DB_ORG"
                 st.rerun()
+            if st.button("🔄 Merge/Arricchimento", key="cmd_merge_enrichment", use_container_width=True):
+                # Apri wizard merge/enrichment
+                from ui.wizard_merge_enrichment_modal import show_merge_wizard
+                show_merge_wizard()
             if st.button("📄 Import Personale", key="cmd_import_pers", use_container_width=True):
                 st.session_state.current_page = "Import DB_ORG"
                 st.rerun()

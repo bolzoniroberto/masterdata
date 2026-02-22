@@ -207,16 +207,28 @@ class DataValidator:
         """
         # Codici strutture presenti
         codici_strutture = set(strutture_df['Codice'].dropna().unique())
-        
+
         # Codici strutture referenziate da personale (come padre)
-        codici_usati = set(personale_df['UNITA\' OPERATIVA PADRE '].dropna().unique())
-        
+        # Cerca colonna con nome simile a "unita operativa padre"
+        padre_col = None
+        for col in personale_df.columns:
+            col_lower = col.lower().strip()
+            if 'unita' in col_lower and 'padre' in col_lower:
+                padre_col = col
+                break
+
+        if padre_col:
+            codici_usati = set(personale_df[padre_col].dropna().unique())
+        else:
+            # Fallback: nessuna colonna padre trovata
+            codici_usati = set()
+
         # Strutture mai referenziate
         codici_orfani = codici_strutture - codici_usati
-        
+
         # Filtra DataFrame
         orphans = strutture_df[strutture_df['Codice'].isin(codici_orfani)]
-        
+
         return orphans
     
     @staticmethod
