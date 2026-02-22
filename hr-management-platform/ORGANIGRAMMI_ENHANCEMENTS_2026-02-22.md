@@ -2,11 +2,16 @@
 
 ## Summary
 
-Aggiunte funzionalità avanzate agli organigrammi HR per migliorare usabilità e capacità di analisi:
+Aggiunte funzionalità avanzate a **tutti e tre gli organigrammi** (HR, ORG, TNS) per migliorare usabilità e capacità di analisi:
 
-1. ✅ **Rilevamento e visualizzazione orfani** - Identifica nodi senza responsabile
+1. ✅ **Rilevamento e visualizzazione orfani** - Identifica nodi senza responsabile/padre
 2. ✅ **Tooltip dettagliati** - Informazioni complete al mouse over
 3. ✅ **Filtri avanzati** - Panel con criteri multipli di filtraggio
+
+**Applicato a**:
+- ✅ Organigramma HR (`orgchart_hr_view.py`)
+- ✅ Organigramma ORG (`orgchart_org_view.py`)
+- ✅ Organigramma TNS (`orgchart_tns_structures_view.py`)
 
 ---
 
@@ -254,7 +259,7 @@ if min_employees > 0:
 
 ## File Modificati
 
-### `/ui/orgchart_hr_view.py`
+### 1. `/ui/orgchart_hr_view.py` ✅
 
 **Modifiche Python (Streamlit)**:
 - Linee 28-64: Aggiunto filtri avanzati (5 colonne + expander)
@@ -266,9 +271,42 @@ if min_employees > 0:
 - Linee 410-438: Funzione `showEnhancedTooltip()` e `hideTooltip()`
 - Linee 674-677: Event handlers tooltip albero orizzontale
 - Linee 766-769: Event handlers tooltip albero verticale
-- Linea 421: Aggiunto `const FILTERS = {filters_json};`
 
-**Totale modifiche**: ~120 righe aggiunte
+**Totale modifiche**: ~163 righe aggiunte
+
+### 2. `/ui/orgchart_org_view.py` ✅
+
+**Modifiche Python (Streamlit)**:
+- Linee 26-69: Filtri toolbar (5 colonne) + expander filtri avanzati
+- Linee 88-172: Arricchimento nodi con dettagli org_units + filtri
+- Logica orfani: unità senza parent_org_unit_id
+- Alert + tabella orfani con: Nome, ID, Descrizione, Responsabile CF, Dipendenti
+
+**Modifiche JavaScript (D3.js)**:
+- Funzione `showEnhancedTooltip()` con dettagli org unit
+- Funzione `hideTooltip()`
+- Event handlers su nodi albero (.on('mouseover'), .on('mouseout'))
+
+**Totale modifiche**: ~155 righe aggiunte
+
+### 3. `/ui/orgchart_tns_structures_view.py` ✅
+
+**Modifiche Python (Streamlit)**:
+- Linee 28-70: Filtri toolbar (5 colonne) + expander filtri avanzati
+- Linee 92-180: Arricchimento nodi con dettagli TNS + filtri
+- Logica orfani: strutture senza padre_tns o padre_tns=ROOT
+- Alert + tabella orfani con: Nome, Codice TNS, Area, Società, Dipendenti, Ha Approvatore
+
+**Modifiche JavaScript (D3.js)**:
+- Funzione `showEnhancedTooltip()` con dettagli TNS (area, società, approvatori)
+- Funzione `hideTooltip()`
+- Event handlers su albero orizzontale E verticale
+
+**Totale modifiche**: ~160 righe aggiunte
+
+---
+
+**Totale complessivo**: ~478 righe di codice aggiunte attraverso 3 file
 
 ---
 
@@ -311,13 +349,28 @@ if min_employees > 0:
 
 ---
 
-## Prossimi Passi
+## Estensione Completata
 
-### Estensione ad Altri Organigrammi
+### ✅ Funzionalità Applicate a Tutti gli Organigrammi
 
-Le stesse funzionalità dovrebbero essere replicate in:
-- [ ] `/ui/orgchart_org_view.py` - Organigramma ORG
-- [ ] `/ui/orgchart_tns_structures_view.py` - Organigramma TNS
+Le funzionalità avanzate sono state replicate con successo in:
+- [x] `/ui/orgchart_hr_view.py` - Organigramma HR ✅
+- [x] `/ui/orgchart_org_view.py` - Organigramma ORG ✅
+- [x] `/ui/orgchart_tns_structures_view.py` - Organigramma TNS ✅
+
+### Dettagli Implementazione per Vista
+
+#### Organigramma ORG
+- **Orfani**: Unità organizzative senza `parent_org_unit_id`
+- **Filtri**: Min dipendenti, Ha unità padre
+- **Tooltip**: ID, Descrizione, Responsabile CF, Approvatore CF, Dipendenti
+
+#### Organigramma TNS
+- **Orfani**: Strutture senza `padre_tns` o `padre_tns = ROOT`
+- **Filtri**: Min dipendenti, Ha approvatore
+- **Tooltip**: Codice TNS, Area, Società, Dipendenti, Approvatori, Warning
+
+## Prossimi Passi (Future Enhancements)
 
 ### Funzionalità Future
 
@@ -356,6 +409,7 @@ Le stesse funzionalità dovrebbero essere replicate in:
 ---
 
 **Implementato**: 2026-02-22
-**File modificati**: 1 (`orgchart_hr_view.py`)
-**Righe aggiunte**: ~120
-**Funzionalità**: 3 (Orfani, Tooltip, Filtri)
+**File modificati**: 3 (`orgchart_hr_view.py`, `orgchart_org_view.py`, `orgchart_tns_structures_view.py`)
+**Righe aggiunte**: ~478 totali (~163 HR, ~155 ORG, ~160 TNS)
+**Funzionalità**: 3 (Orfani, Tooltip, Filtri) × 3 viste = 9 enhancements totali
+**Commit**: `feat: apply advanced organigrammi features to ORG and TNS views`
