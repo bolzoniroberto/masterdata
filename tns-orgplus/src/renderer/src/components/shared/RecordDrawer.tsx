@@ -47,6 +47,21 @@ function RoleRow({ label, value }: { label: string; value: string | null | undef
   )
 }
 
+// Valori predefiniti per i campi con pochi stati distinti nel DB.
+// Usati per mostrare un combobox (input + datalist) al posto del testo libero.
+const FIELD_OPTIONS: Record<string, string[]> = {
+  approvatore:           ['APPR', 'APPRG', 'APPRSRALTR', 'APPRTOP'],
+  viaggiatore:           ['V', 'VG', 'VGTOP2', 'VGTOP'],
+  cassiere:              ['CMIR', 'CMID', 'CRMR', 'CAQD'],
+  segr_red_assistita:    ['SGQMIILD', 'SGQRMGUOR', 'SGRRM', 'SGRADIOMI', 'SGRMI', 'SGRADIORM', 'SGDR', 'SGHTSI'],
+  segretario_assistito:  ['SEGRETARIOMI'],
+  controllore_assistito: ['CONTD', 'CONTGMI', 'CONTGRM', 'CONTGRADIOMI', 'CONTGRADIORM'],
+  sede_tns:              ['Milano', 'Roma', 'Trento', 'Venezia Marghera', 'Palermo', 'Genova'],
+  gruppo_sind:           ['RSUGRAMI', 'CDRQUOMI', 'RSUGRARM', 'POLQUOMI', 'RSURADMI', 'CDRQUORM', 'CDRRAD', 'RSUCUL', 'CDRAGEMI', 'RSUGRAMIEVENTI', 'DIRIGENTI', 'CDRAGERM', 'CDRUOR', 'CDRGUI', 'RSUGRATN', 'RSURADRM', 'POLQUORM', 'RSUGRARMMFE', 'RSUGRARMEVENTI', 'CDRAGERMMFE'],
+  ruoli_afc:             ['AFCCDG', 'AFCNS', 'AFCFISC', 'AFCSV'],
+  ruoli_hr:              ['AMMPERS'],
+}
+
 const ROLE_FIELDS: { key: string; label: string }[] = [
   { key: 'approvatore', label: 'Approvatore' },
   { key: 'viaggiatore', label: 'Viaggiatore' },
@@ -87,6 +102,7 @@ export default function RecordDrawer({
   const [strutturaDipendenti, setStrutturaDipendenti] = useState<Dipendente[]>([])
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmHardDelete, setConfirmHardDelete] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const { showToast, refreshAll } = useOrgStore()
 
@@ -183,6 +199,22 @@ export default function RecordDrawer({
     }
   }
 
+  const handleHardDelete = async () => {
+    setConfirmHardDelete(false)
+    try {
+      const result = await window.api.dipendenti.hardDelete(r!.codice_fiscale as string)
+      if (result.success) {
+        showToast('Dipendente eliminato definitivamente', 'success')
+        await refreshAll()
+        onClose()
+      } else {
+        setDeleteError(result.message ?? 'Impossibile eliminare definitivamente')
+      }
+    } catch (e) {
+      setDeleteError(String(e))
+    }
+  }
+
   const fieldInput = (key: string, placeholder?: string) => (
     <input
       className="w-full px-2 py-1 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-400"
@@ -191,6 +223,31 @@ export default function RecordDrawer({
       onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
     />
   )
+
+  // Combobox: input + datalist per i campi con valori predefiniti.
+  // L'utente può selezionare dalla tendina o digitare un valore custom.
+  const fieldCombo = (key: string) => {
+    const opts = FIELD_OPTIONS[key]
+    const listId = `drawer-opts-${key}`
+    return (
+      <>
+        <input
+          list={listId}
+          className="w-full px-2 py-1 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          value={form[key] ?? ''}
+          placeholder="Seleziona o digita..."
+          onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+        />
+        <datalist id={listId}>
+          {opts.map((o) => <option key={o} value={o} />)}
+        </datalist>
+      </>
+    )
+  }
+
+  // Restituisce fieldCombo se il campo ha opzioni predefinite, altrimenti fieldInput
+  const fieldAuto = (key: string, placeholder?: string) =>
+    FIELD_OPTIONS[key] ? fieldCombo(key) : fieldInput(key, placeholder)
 
   return (
     <>
@@ -303,7 +360,7 @@ export default function RecordDrawer({
                 {ROLE_FIELDS.map(({ key, label }) => (
                   <div key={key}>
                     <label className="text-xs text-gray-500 mb-1 block">{label}</label>
-                    {fieldInput(key)}
+                    {fieldAuto(key)}
                   </div>
                 ))}
               </div>
@@ -324,7 +381,7 @@ export default function RecordDrawer({
                 {ASSISTENTI_FIELDS.map(({ key, label }) => (
                   <div key={key}>
                     <label className="text-xs text-gray-500 mb-1 block">{label}</label>
-                    {fieldInput(key)}
+                    {fieldAuto(key)}
                   </div>
                 ))}
               </div>
@@ -345,7 +402,7 @@ export default function RecordDrawer({
                 {CLASSIFICAZIONI_FIELDS.map(({ key, label }) => (
                   <div key={key}>
                     <label className="text-xs text-gray-500 mb-1 block">{label}</label>
-                    {fieldInput(key)}
+                    {fieldAuto(key)}
                   </div>
                 ))}
               </div>
@@ -396,7 +453,7 @@ export default function RecordDrawer({
 
           {/* Delete button (view mode only) */}
           {mode === 'view' && record && (
-            <div className="pt-2">
+            <div className="pt-2 flex flex-col gap-2">
               <button
                 onClick={() => setConfirmDelete(true)}
                 className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 transition-colors"
@@ -404,6 +461,16 @@ export default function RecordDrawer({
                 <Trash2 className="w-3.5 h-3.5" />
                 Elimina {type === 'struttura' ? 'struttura' : 'dipendente'}
               </button>
+              {/* Hard delete: only for soft-deleted dipendenti */}
+              {type === 'dipendente' && (r as Dipendente)?.deleted_at && (
+                <button
+                  onClick={() => setConfirmHardDelete(true)}
+                  className="flex items-center gap-1.5 text-sm text-red-700 font-semibold hover:text-red-900 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Elimina definitivamente
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -442,6 +509,16 @@ export default function RecordDrawer({
         confirmLabel="Elimina"
         onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(false)}
+      />
+
+      {/* Confirm HARD delete dialog */}
+      <ConfirmDialog
+        open={confirmHardDelete}
+        title="Eliminazione definitiva"
+        message={`⚠️ ATTENZIONE: questa operazione è IRREVERSIBILE.\n\nIl dipendente "${title}" verrà cancellato definitivamente dal database e non potrà essere recuperato.`}
+        confirmLabel="Elimina definitivamente"
+        onConfirm={handleHardDelete}
+        onCancel={() => setConfirmHardDelete(false)}
       />
 
       <style>{`

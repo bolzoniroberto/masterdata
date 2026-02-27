@@ -309,6 +309,16 @@ export function registerHandlers(): void {
     return { success: true }
   })
 
+  ipcMain.handle('dipendenti:hardDelete', (_event, cf: string) => {
+    const db = getDb()
+    const dip = db.prepare('SELECT titolare, deleted_at FROM dipendenti WHERE codice_fiscale = ?').get(cf) as { titolare: string; deleted_at: string | null }
+    if (!dip) return { success: false, message: 'Dipendente non trovato' }
+    if (!dip.deleted_at) return { success: false, message: 'Il dipendente deve essere eliminato (soft delete) prima di poter essere cancellato definitivamente' }
+    db.prepare('DELETE FROM dipendenti WHERE codice_fiscale = ?').run(cf)
+    writeChangeLog('dipendente', cf, dip?.titolare ?? cf, 'DELETE', 'hard_delete', null, 'PERMANENT')
+    return { success: true }
+  })
+
   // ──────────────────────────────────────────────────────────────
   // XLS IMPORT / EXPORT
   // ──────────────────────────────────────────────────────────────

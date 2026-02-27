@@ -11,6 +11,7 @@ interface ElectronAPI {
     restore: (codice: string) => Promise<{ success: boolean }>
     suggestCodice: (codicePadre: string) => Promise<string>
     checkCodice: (codice: string) => Promise<{ available: boolean }>
+    updateParent: (codice: string, newCodiceParent: string | null) => Promise<{ success: boolean; message?: string }>
   }
   dipendenti: {
     list: (showDeleted?: boolean) => Promise<Dipendente[]>
@@ -19,6 +20,7 @@ interface ElectronAPI {
     update: (cf: string, data: Partial<Dipendente>) => Promise<{ success: boolean; error?: string }>
     delete: (cf: string) => Promise<{ success: boolean }>
     restore: (cf: string) => Promise<{ success: boolean }>
+    hardDelete: (cf: string) => Promise<{ success: boolean; message?: string }>
   }
   xls: {
     openFileDialog: () => Promise<string | null>

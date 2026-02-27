@@ -33,7 +33,7 @@ export default function ConfirmDialog({
           <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 flex-none" />
           <div>
             <h3 className="font-semibold text-gray-900 text-sm">{title}</h3>
-            <p className="text-sm text-gray-500 mt-1">{message}</p>
+            <p className="text-sm text-gray-500 mt-1 whitespace-pre-line">{message}</p>
           </div>
         </div>
 

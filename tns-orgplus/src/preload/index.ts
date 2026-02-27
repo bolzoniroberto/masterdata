@@ -22,7 +22,8 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('dipendenti:create', data),
     update: (cf: string, data: Record<string, unknown>) => ipcRenderer.invoke('dipendenti:update', cf, data),
     delete: (cf: string) => ipcRenderer.invoke('dipendenti:delete', cf),
-    restore: (cf: string) => ipcRenderer.invoke('dipendenti:restore', cf)
+    restore: (cf: string) => ipcRenderer.invoke('dipendenti:restore', cf),
+    hardDelete: (cf: string) => ipcRenderer.invoke('dipendenti:hardDelete', cf)
   },
 
   xls: {

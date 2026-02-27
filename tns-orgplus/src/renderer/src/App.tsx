@@ -16,13 +16,12 @@ export default function App() {
 
   return (
     <AppShell>
-      <div className="h-full">
-        {activeTab === 'orgchart' && <OrgChartView />}
-        {activeTab === 'grid' && <GridView />}
-        {activeTab === 'accordion' && <AccordionView />}
-        {activeTab === 'importexport' && <ImportExportView />}
-        {activeTab === 'storico' && <StoricoView />}
-      </div>
+      {/* Tutti i tab restano montati: si usa hidden per preservare lo stato locale (accordion aperto, posizione scroll, ecc.) */}
+      <div className={`h-full ${activeTab === 'orgchart' ? '' : 'hidden'}`}><OrgChartView /></div>
+      <div className={`h-full ${activeTab === 'grid' ? '' : 'hidden'}`}><GridView /></div>
+      <div className={`h-full ${activeTab === 'accordion' ? '' : 'hidden'}`}><AccordionView /></div>
+      <div className={`h-full ${activeTab === 'importexport' ? '' : 'hidden'}`}><ImportExportView /></div>
+      <div className={`h-full ${activeTab === 'storico' ? '' : 'hidden'}`}><StoricoView /></div>
     </AppShell>
   )
 }
