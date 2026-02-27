@@ -16,8 +16,9 @@ interface OrgStore {
   setLoading: (v: boolean) => void
 
   // Toast
-  toast: { message: string; type: 'success' | 'error' | 'warning' } | null
+  toast: { message: string; type: 'success' | 'error' | 'warning' | 'info' } | null
   showToast: (message: string, type?: 'success' | 'error' | 'warning') => void
+  addToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void
   clearToast: () => void
 
   // Refresh functions
@@ -40,6 +41,10 @@ export const useOrgStore = create<OrgStore>((set, get) => ({
 
   toast: null,
   showToast: (message, type = 'success') => {
+    set({ toast: { message, type } })
+    setTimeout(() => get().clearToast(), 3500)
+  },
+  addToast: (message, type = 'success') => {
     set({ toast: { message, type } })
     setTimeout(() => get().clearToast(), 3500)
   },

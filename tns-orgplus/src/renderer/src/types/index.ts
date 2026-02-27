@@ -106,4 +106,4 @@ export interface GridFilters {
   showDeleted: boolean
 }
 
-export type TabView = 'orgchart' | 'grid' | 'importexport' | 'storico'
+export type TabView = 'orgchart' | 'grid' | 'accordion' | 'importexport' | 'storico'

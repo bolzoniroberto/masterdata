@@ -426,6 +426,66 @@ export function registerHandlers(): void {
       .forEach((r) => sedi.add(r.sede_tns.toLowerCase()))
     return Array.from(sedi).sort()
   })
+
+  // ──────────────────────────────────────────────────────────────
+  // STRUTTURE - PARENT UPDATE (with cycle detection)
+  // ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle('strutture:updateParent', (_event, codice: string, newCodiceParent: string | null) => {
+    const db = getDb()
+
+    // Get current structure
+    const current = db.prepare('SELECT * FROM strutture WHERE codice = ?').get(codice) as Record<string, unknown>
+    if (!current) {
+      return { success: false, error: 'NOT_FOUND', message: 'Struttura non trovata' }
+    }
+
+    // Same parent - no-op
+    if (current.codice_padre === newCodiceParent) {
+      return { success: true }
+    }
+
+    // Cycle detection: check if newCodiceParent is a descendant of codice
+    if (newCodiceParent) {
+      const checkCycle = db.prepare(`
+        WITH RECURSIVE descendants(c) AS (
+          SELECT ?1
+          UNION ALL
+          SELECT s.codice FROM strutture s
+          INNER JOIN descendants d ON s.codice_padre = d.c
+          WHERE s.deleted_at IS NULL
+        )
+        SELECT COUNT(*) as n FROM descendants WHERE c = ?2
+      `)
+      const cycleCheck = checkCycle.get(codice, newCodiceParent) as { n: number }
+      if (cycleCheck.n > 0) {
+        return { success: false, error: 'CYCLE_DETECTED', message: 'Non puoi impostare un figlio come padre' }
+      }
+
+      // Verify newCodiceParent exists and is not deleted
+      const parentExists = db.prepare('SELECT codice FROM strutture WHERE codice = ? AND deleted_at IS NULL').get(newCodiceParent)
+      if (!parentExists) {
+        return { success: false, error: 'PARENT_NOT_FOUND', message: 'Struttura padre non trovata o eliminata' }
+      }
+    }
+
+    // Update parent
+    const oldParent = current.codice_padre as string | null
+    db.prepare('UPDATE strutture SET codice_padre = ?, updated_at = CURRENT_TIMESTAMP WHERE codice = ?').run(newCodiceParent, codice)
+
+    // Write change log
+    writeChangeLog(
+      'struttura',
+      codice,
+      current.descrizione as string,
+      'UPDATE',
+      'codice_padre',
+      oldParent ?? null,
+      newCodiceParent ?? null
+    )
+
+    return { success: true }
+  })
 }
 
 // Code suggestion helper

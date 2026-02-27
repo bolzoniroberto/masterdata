@@ -2,6 +2,7 @@ import React, { useEffect } from 'react'
 import AppShell from './components/layout/AppShell'
 import OrgChartView from './views/OrgChartView'
 import GridView from './views/GridView'
+import AccordionView from './views/AccordionView'
 import ImportExportView from './views/ImportExportView'
 import StoricoView from './views/StoricoView'
 import { useOrgStore } from './store/useOrgStore'
@@ -18,6 +19,7 @@ export default function App() {
       <div className="h-full">
         {activeTab === 'orgchart' && <OrgChartView />}
         {activeTab === 'grid' && <GridView />}
+        {activeTab === 'accordion' && <AccordionView />}
         {activeTab === 'importexport' && <ImportExportView />}
         {activeTab === 'storico' && <StoricoView />}
       </div>

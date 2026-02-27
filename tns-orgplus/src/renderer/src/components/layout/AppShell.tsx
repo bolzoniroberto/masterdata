@@ -6,6 +6,7 @@ import Toast from '../shared/Toast'
 const TABS: { id: TabView; label: string }[] = [
   { id: 'orgchart', label: 'OrgChart' },
   { id: 'grid', label: 'Grid' },
+  { id: 'accordion', label: 'Accordion' },
   { id: 'importexport', label: 'Import / Export' },
   { id: 'storico', label: 'Storico' }
 ]

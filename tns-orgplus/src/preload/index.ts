@@ -11,7 +11,9 @@ contextBridge.exposeInMainWorld('api', {
     delete: (codice: string) => ipcRenderer.invoke('strutture:delete', codice),
     restore: (codice: string) => ipcRenderer.invoke('strutture:restore', codice),
     suggestCodice: (codicePadre: string) => ipcRenderer.invoke('strutture:suggestCodice', codicePadre),
-    checkCodice: (codice: string) => ipcRenderer.invoke('strutture:checkCodice', codice)
+    checkCodice: (codice: string) => ipcRenderer.invoke('strutture:checkCodice', codice),
+    updateParent: (codice: string, newCodiceParent: string | null) =>
+      ipcRenderer.invoke('strutture:updateParent', codice, newCodiceParent)
   },
 
   dipendenti: {
