@@ -8,12 +8,6 @@ import {
   useSensors,
   closestCenter,
 } from '@dnd-kit/core'
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import * as Accordion from '@radix-ui/react-accordion'
 import { useOrgStore } from '../store/useOrgStore'
 import type { Struttura, Dipendente } from '../types'
@@ -63,148 +57,6 @@ function buildTree(
   return build(null)
 }
 
-// Draggable struttura item
-interface SortableStruturaItemProps {
-  treeNode: TreeStructura
-  onEdit: (s: Struttura & { dipendenti_count: number }) => void
-  onDelete: (s: Struttura & { dipendenti_count: number }) => void
-  compact: boolean
-}
-
-function SortableStruturaItem({
-  treeNode,
-  onEdit,
-  onDelete,
-  compact,
-}: SortableStruturaItemProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: treeNode.struttura.codice,
-  })
-
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.5 : 1,
-  }
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`py-2 px-3 bg-white border border-gray-200 rounded-md cursor-move hover:bg-gray-50 transition-colors ${
-        isDragging ? 'shadow-lg' : 'shadow-sm'
-      }`}
-      {...attributes}
-      {...listeners}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-gray-900">{treeNode.struttura.codice}</div>
-          {!compact && (
-            <>
-              <div className="text-sm text-gray-600 truncate">{treeNode.struttura.descrizione}</div>
-              {treeNode.struttura.titolare && (
-                <div className="text-xs text-gray-500">Titolare: {treeNode.struttura.titolare}</div>
-              )}
-              {treeNode.struttura.cdc_costo && (
-                <div className="text-xs text-gray-500">CdC: {treeNode.struttura.cdc_costo}</div>
-              )}
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onEdit(treeNode.struttura)
-            }}
-            className="text-xs p-1.5 text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-            title="Modifica"
-          >
-            <Edit2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(treeNode.struttura)
-            }}
-            className="text-xs p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-            title="Elimina"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Draggable dipendente item
-interface SortableDipendenteItemProps {
-  dipendente: Dipendente
-  onEdit: (d: Dipendente) => void
-  onDelete: (d: Dipendente) => void
-  compact: boolean
-}
-
-function SortableDipendenteItem({
-  dipendente,
-  onEdit,
-  onDelete,
-  compact,
-}: SortableDipendenteItemProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: `dip-${dipendente.codice_fiscale}`,
-  })
-
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.5 : 1,
-  }
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`py-2 px-3 bg-blue-50 border border-blue-200 rounded-md cursor-move hover:bg-blue-100 transition-colors ml-4 ${
-        isDragging ? 'shadow-lg' : 'shadow-sm'
-      }`}
-      {...attributes}
-      {...listeners}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-gray-900">{dipendente.codice_fiscale}</div>
-          {!compact && dipendente.titolare && (
-            <div className="text-sm text-gray-600">{dipendente.titolare}</div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onEdit(dipendente)
-            }}
-            className="text-xs p-1.5 text-blue-600 hover:bg-blue-200 rounded transition-colors"
-            title="Modifica"
-          >
-            <Edit2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(dipendente)
-            }}
-            className="text-xs p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-            title="Elimina"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Recursive accordion item for struttura with children
 interface AccordionStruturaItemProps {
   treeNode: TreeStructura
@@ -225,25 +77,11 @@ function AccordionStruturaItem({
   onDeleteDipendente,
   compact,
 }: AccordionStruturaItemProps) {
-  const allIds = useMemo(() => {
-    const ids = [treeNode.struttura.codice]
-    treeNode.dipendenti.forEach((d) => ids.push(`dip-${d.codice_fiscale}`))
-    if (treeNode.children.length > 0) {
-      // Add child structure IDs
-      const collectIds = (node: TreeStructura) => {
-        ids.push(node.struttura.codice)
-        node.children.forEach(collectIds)
-      }
-      treeNode.children.forEach(collectIds)
-    }
-    return ids
-  }, [treeNode])
-
   return (
     <Accordion.Item value={treeNode.struttura.codice} className="border-b border-gray-200">
       <Accordion.Trigger className="w-full p-3 hover:bg-gray-50 transition-colors flex items-center justify-between data-[state=open]:bg-gray-50">
         <div className="flex items-center flex-1 min-w-0 text-left">
-          <ChevronDown className="w-4 h-4 mr-2 flex-shrink-0 transition-transform group-data-[state=open]:-rotate-180" />
+          <ChevronDown className="w-4 h-4 mr-2 flex-shrink-0 transition-transform" />
           <div className="flex-1 min-w-0">
             <div className="font-medium text-gray-900">{treeNode.struttura.codice}</div>
             {!compact && (
@@ -259,68 +97,113 @@ function AccordionStruturaItem({
         </div>
       </Accordion.Trigger>
       <Accordion.Content className="p-3 bg-gray-50">
-        <SortableContext items={allIds} strategy={verticalListSortingStrategy}>
-          <div className="space-y-3">
-            {/* Struttura item */}
-            <div>
-              <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Struttura</div>
-              <SortableStruturaItem
-                treeNode={treeNode}
-                onEdit={onEditStruttura}
-                onDelete={onDeleteStruttura}
-                compact={compact}
-              />
-            </div>
-
-            {/* Dipendenti */}
-            {treeNode.dipendenti.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Dipendenti ({treeNode.dipendenti.length})</div>
-                <div className="space-y-2">
-                  {treeNode.dipendenti.map((d) => (
-                    <SortableDipendenteItem
-                      key={d.codice_fiscale}
-                      dipendente={d}
-                      onEdit={onEditDipendente}
-                      onDelete={onDeleteDipendente}
-                      compact={compact}
-                    />
-                  ))}
+        <div className="space-y-3">
+          {/* Struttura card */}
+          <div>
+            <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Struttura</div>
+            <div className="py-2 px-3 bg-white border border-gray-200 rounded-md shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-gray-900">{treeNode.struttura.codice}</div>
+                  {!compact && (
+                    <>
+                      <div className="text-sm text-gray-600 truncate">{treeNode.struttura.descrizione}</div>
+                      {treeNode.struttura.titolare && (
+                        <div className="text-xs text-gray-500">Titolare: {treeNode.struttura.titolare}</div>
+                      )}
+                      {treeNode.struttura.cdc_costo && (
+                        <div className="text-xs text-gray-500">CdC: {treeNode.struttura.cdc_costo}</div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                  <button
+                    onClick={() => onEditStruttura(treeNode.struttura)}
+                    className="text-xs p-1.5 text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                    title="Modifica"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => onDeleteStruttura(treeNode.struttura)}
+                    className="text-xs p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                    title="Elimina"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-            )}
-
-            {/* Add dipendente button */}
-            <button
-              onClick={() => onCreateDipendente(treeNode.struttura.codice)}
-              className="w-full py-2 px-3 text-sm text-blue-600 hover:bg-blue-50 rounded-md border border-dashed border-blue-300 transition-colors flex items-center justify-center gap-1"
-            >
-              <Plus className="w-4 h-4" />
-              Nuovo Dipendente
-            </button>
-
-            {/* Child structures */}
-            {treeNode.children.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Sottostrutture ({treeNode.children.length})</div>
-                <Accordion type="single" collapsible className="border border-gray-200 rounded-md">
-                  {treeNode.children.map((child) => (
-                    <AccordionStruturaItem
-                      key={child.struttura.codice}
-                      treeNode={child}
-                      onEditStruttura={onEditStruttura}
-                      onDeleteStruttura={onDeleteStruttura}
-                      onCreateDipendente={onCreateDipendente}
-                      onEditDipendente={onEditDipendente}
-                      onDeleteDipendente={onDeleteDipendente}
-                      compact={compact}
-                    />
-                  ))}
-                </Accordion>
-              </div>
-            )}
+            </div>
           </div>
-        </SortableContext>
+
+          {/* Dipendenti */}
+          {treeNode.dipendenti.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Dipendenti ({treeNode.dipendenti.length})</div>
+              <div className="space-y-2">
+                {treeNode.dipendenti.map((d) => (
+                  <div key={d.codice_fiscale} className="py-2 px-3 bg-blue-50 border border-blue-200 rounded-md ml-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-900">{d.codice_fiscale}</div>
+                        {!compact && d.titolare && (
+                          <div className="text-sm text-gray-600">{d.titolare}</div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                        <button
+                          onClick={() => onEditDipendente(d)}
+                          className="text-xs p-1.5 text-blue-600 hover:bg-blue-200 rounded transition-colors"
+                          title="Modifica"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => onDeleteDipendente(d)}
+                          className="text-xs p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                          title="Elimina"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Add dipendente button */}
+          <button
+            onClick={() => onCreateDipendente(treeNode.struttura.codice)}
+            className="w-full py-2 px-3 text-sm text-blue-600 hover:bg-blue-50 rounded-md border border-dashed border-blue-300 transition-colors flex items-center justify-center gap-1"
+          >
+            <Plus className="w-4 h-4" />
+            Nuovo Dipendente
+          </button>
+
+          {/* Child structures — recursive */}
+          {treeNode.children.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-gray-700 px-3 mb-2">Sottostrutture ({treeNode.children.length})</div>
+              <Accordion.Root type="single" collapsible className="border border-gray-200 rounded-md">
+                {treeNode.children.map((child) => (
+                  <AccordionStruturaItem
+                    key={child.struttura.codice}
+                    treeNode={child}
+                    onEditStruttura={onEditStruttura}
+                    onDeleteStruttura={onDeleteStruttura}
+                    onCreateDipendente={onCreateDipendente}
+                    onEditDipendente={onEditDipendente}
+                    onDeleteDipendente={onDeleteDipendente}
+                    compact={compact}
+                  />
+                ))}
+              </Accordion.Root>
+            </div>
+          )}
+        </div>
       </Accordion.Content>
     </Accordion.Item>
   )
