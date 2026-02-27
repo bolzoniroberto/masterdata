@@ -108,12 +108,19 @@ export function registerHandlers(): void {
       'controllore_assistito', 'ruoli_afc', 'ruoli_hr', 'altri_ruoli', 'sede_tns', 'gruppo_sind'
     ]
 
+    // Merge current values with incoming data so missing fields don't cause
+    // "Missing named parameter" errors in better-sqlite3
+    const merged: Record<string, unknown> = { codice }
+    for (const field of updateFields) {
+      merged[field] = field in data ? (data[field] ?? null) : (current[field] ?? null)
+    }
+
     db.prepare(`
       UPDATE strutture SET
         ${updateFields.map((f) => `${f} = @${f}`).join(',\n        ')},
         updated_at = CURRENT_TIMESTAMP
       WHERE codice = @codice
-    `).run({ ...data, codice })
+    `).run(merged)
 
     // Log changed fields
     for (const field of updateFields) {
@@ -253,12 +260,19 @@ export function registerHandlers(): void {
       'ruoli_afc', 'ruoli_hr', 'altri_ruoli', 'sede_tns', 'gruppo_sind'
     ]
 
+    // Merge current values with incoming data so missing fields don't cause
+    // "Missing named parameter" errors in better-sqlite3
+    const merged: Record<string, unknown> = { codice_fiscale: cf }
+    for (const field of updateFields) {
+      merged[field] = field in data ? (data[field] ?? null) : (current[field] ?? null)
+    }
+
     db.prepare(`
       UPDATE dipendenti SET
         ${updateFields.map((f) => `${f} = @${f}`).join(',\n        ')},
         updated_at = CURRENT_TIMESTAMP
       WHERE codice_fiscale = @codice_fiscale
-    `).run({ ...data, codice_fiscale: cf })
+    `).run(merged)
 
     for (const field of updateFields) {
       const oldVal = current[field] !== undefined && current[field] !== null ? String(current[field]) : null
