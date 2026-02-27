@@ -390,6 +390,12 @@ export default function AccordionView() {
     const { active, over } = event
     if (!over || active.id === over.id) return
 
+    // Guard: ensure window.api is available
+    if (!window.api?.strutture?.updateParent) {
+      addToast('Applicazione non completamente inizializzata', 'error')
+      return
+    }
+
     const activeId = String(active.id)
     const overId = String(over.id)
 
@@ -421,6 +427,10 @@ export default function AccordionView() {
       message: `Sei sicuro di voler eliminare "${s.codice}"?`,
       onConfirm: async () => {
         try {
+          if (!window.api?.strutture?.delete) {
+            addToast('Applicazione non completamente inizializzata', 'error')
+            return
+          }
           const result = await window.api.strutture.delete(s.codice)
           if (result.success) {
             await refreshAll()
@@ -441,6 +451,10 @@ export default function AccordionView() {
       message: `Sei sicuro di voler eliminare "${d.codice_fiscale}"?`,
       onConfirm: async () => {
         try {
+          if (!window.api?.dipendenti?.delete) {
+            addToast('Applicazione non completamente inizializzata', 'error')
+            return
+          }
           const result = await window.api.dipendenti.delete(d.codice_fiscale)
           if (result.success) {
             await refreshAll()
