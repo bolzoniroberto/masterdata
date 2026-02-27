@@ -51,21 +51,25 @@ export const useOrgStore = create<OrgStore>((set, get) => ({
   clearToast: () => set({ toast: null }),
 
   refreshStrutture: async (showDeleted = false) => {
+    if (!window.api) return
     const strutture = await window.api.strutture.list(showDeleted)
     set({ strutture })
   },
 
   refreshDipendenti: async (showDeleted = false) => {
+    if (!window.api) return
     const dipendenti = await window.api.dipendenti.list(showDeleted)
     set({ dipendenti })
   },
 
   refreshCounts: async () => {
+    if (!window.api) return
     const counts = await window.api.stats.counts()
     set({ counts })
   },
 
   refreshAll: async () => {
+    if (!window.api) return
     set({ loading: true })
     try {
       const [strutture, dipendenti, counts] = await Promise.all([
